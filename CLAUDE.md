@@ -262,21 +262,23 @@ go build -o mautrix-mybridge ./cmd/mautrix-mybridge
 bbctl -e staging login
 ```
 
-### Run bridge in local dev mode
+### Run a custom bridge
+
 ```bash
 cd /path/to/bridge
-bbctl -e staging run sh-mybridge --type bridgev2 --local-dev
+
+# Build the bridge
+./build.sh
+
+# Run with bbctl (bridge name must start with sh-)
+bbctl -e staging run sh-mybridge --type bridgev2 \
+  --custom-startup-command "./mautrix-mybridge -c config.yaml"
 ```
 
 ### Key flags:
 - `--type bridgev2`: Use generic bridgev2 config template
-- `--local-dev`: Run from current directory, compile with build.sh
-- `--custom-startup-command`: Override startup command
+- `--custom-startup-command`: Command to start the bridge
 - `-e staging`: Use staging environment
-
-### Bridge naming:
-- Self-hosted bridges must start with `sh-` prefix
-- Example: `sh-bookface`, `sh-myservice`
 
 ## .gitignore Template
 
