@@ -61,17 +61,17 @@ func (bc *BookfaceConnector) GetBridgeInfoVersion() (info, capabilities int) {
 
 func (bc *BookfaceConnector) GetLoginFlows() []bridgev2.LoginFlow {
 	return []bridgev2.LoginFlow{{
-		Name:        "Cookies",
-		Description: "Log in with browser cookies from messages.ycombinator.com",
-		ID:          "cookies",
+		Name:        "Password",
+		Description: "Log in with your YC username and password",
+		ID:          "password",
 	}}
 }
 
 func (bc *BookfaceConnector) CreateLogin(ctx context.Context, user *bridgev2.User, flowID string) (bridgev2.LoginProcess, error) {
-	if flowID != "cookies" {
+	if flowID != "password" {
 		return nil, bridgev2.ErrInvalidLoginFlowID
 	}
-	return &CookiesLogin{
+	return &PasswordLogin{
 		User:   user,
 		Bridge: bc.Bridge,
 	}, nil
@@ -100,4 +100,5 @@ type UserLoginMetadata struct {
 	CSRFToken string `json:"csrf_token"`
 	UserID    int64  `json:"user_id"`
 	UserName  string `json:"user_name"`
+	AvatarURL string `json:"avatar_url,omitempty"`
 }

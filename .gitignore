@@ -25,6 +25,9 @@ vendor/
 *.swo
 *~
 
+# macOS
+.DS_Store
+
 # Config files with secrets
 config.yaml
 *.db

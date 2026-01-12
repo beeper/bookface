@@ -8,9 +8,47 @@ import (
 type User struct {
 	ID          int64  `json:"id"`
 	Name        string `json:"name"`
+	FullName    string `json:"full_name"`
+	FirstName   string `json:"first_name"`
+	LastName    string `json:"last_name"`
+	ShortName   string `json:"short_name"`
+	HNID        string `json:"hnid"`
 	Slug        string `json:"slug"`
 	AvatarThumb string `json:"avatar_thumb"`
 	AvatarURL   string `json:"avatar_url"`
+
+	// Company info from byline_company
+	BylineCompany *UserCompany `json:"byline_company,omitempty"`
+}
+
+// UserCompany represents company info in a user's byline.
+type UserCompany struct {
+	ID    int64  `json:"id"`
+	Name  string `json:"name"`
+	Logo  string `json:"logo"`
+	Batch string `json:"batch"`
+}
+
+// GetDisplayName returns the best display name for the user.
+func (u *User) GetDisplayName() string {
+	if u.FullName != "" {
+		return u.FullName
+	}
+	if u.Name != "" {
+		return u.Name
+	}
+	if u.ShortName != "" {
+		return u.ShortName
+	}
+	return u.HNID
+}
+
+// GetAvatarURL returns the avatar URL if available.
+func (u *User) GetAvatarURL() string {
+	if u.AvatarThumb != "" {
+		return u.AvatarThumb
+	}
+	return u.AvatarURL
 }
 
 // ChatUser represents a user within a chat context.

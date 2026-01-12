@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 
 const (
 	BaseURL         = "https://messages.ycombinator.com"
+	AccountURL      = "https://account.ycombinator.com"
 	DefaultPerPage  = 50
 	RequestTimeout  = 30 * time.Second
 )
@@ -66,7 +68,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body io.Rea
 	req.Header.Set("Referer", c.baseURL+"/messages")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
 
-	c.log.Debug().Str("method", method).Str("url", reqURL).Msg("Making request")
+	c.log.Debug().Str("method", method).Str("url", reqURL).Int("cookie_length", len(c.cookies)).Msg("Making request")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -104,23 +106,38 @@ func (c *Client) doJSONRequest(ctx context.Context, method, path string, body io
 
 // FetchCSRFToken fetches the CSRF token from the HTML page.
 func (c *Client) FetchCSRFToken(ctx context.Context) (string, error) {
-	resp, err := c.doRequest(ctx, http.MethodGet, "/messages", nil)
+	// We need to request HTML explicitly, not JSON
+	reqURL := c.baseURL + "/messages"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Cookie", c.cookies)
+	req.Header.Set("Accept", "text/html")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("failed to fetch page: status %d", resp.StatusCode)
-	}
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("failed to read response body: %w", err)
 	}
 
+	c.log.Debug().Int("status_code", resp.StatusCode).Int("body_length", len(bodyBytes)).Msg("CSRF token fetch response")
+
+	if resp.StatusCode != http.StatusOK {
+		c.log.Error().Int("status_code", resp.StatusCode).Str("body", string(bodyBytes[:min(500, len(bodyBytes))])).Msg("Failed to fetch CSRF token page")
+		return "", fmt.Errorf("failed to fetch page: status %d", resp.StatusCode)
+	}
+
 	matches := csrfMetaRegex.FindSubmatch(bodyBytes)
 	if len(matches) < 2 {
+		c.log.Error().Str("body_preview", string(bodyBytes[:min(500, len(bodyBytes))])).Msg("CSRF token not found in page")
 		return "", fmt.Errorf("CSRF token not found in page")
 	}
 
@@ -233,6 +250,146 @@ func (c *Client) GetAllMessages(ctx context.Context, chatID int64) ([]Message, e
 	}
 
 	return allMessages, nil
+}
+
+// LoginRequest represents the request body for YC SSO login.
+type LoginRequest struct {
+	YCID     string  `json:"ycid"`
+	Password string  `json:"password"`
+	Captcha  *string `json:"captcha"`
+	TOTP     string  `json:"totp"`
+	Continue string  `json:"continue"`
+}
+
+// LoginResponse represents the response from YC SSO login.
+type LoginResponse struct {
+	Success bool   `json:"success,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+// Login authenticates with YC SSO and returns credentials with the _sso.key cookie.
+func Login(ctx context.Context, ycid, password string, log zerolog.Logger) (*Credentials, error) {
+	log = log.With().Str("component", "yc_login").Logger()
+
+	// Create a client with cookie jar to capture cookies
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create cookie jar: %w", err)
+	}
+	httpClient := &http.Client{
+		Timeout: RequestTimeout,
+		Jar:     jar,
+	}
+
+	// Step 1: Fetch the account page to get CSRF token
+	log.Debug().Msg("Fetching account page for CSRF token")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, AccountURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create login page request: %w", err)
+	}
+	req.Header.Set("Accept", "text/html")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch login page: %w", err)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read login page: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		log.Error().Int("status_code", resp.StatusCode).Str("body", string(bodyBytes[:min(500, len(bodyBytes))])).Msg("Failed to fetch login page")
+		return nil, fmt.Errorf("failed to fetch login page: status %d", resp.StatusCode)
+	}
+
+	// Extract CSRF token from meta tag
+	matches := csrfMetaRegex.FindSubmatch(bodyBytes)
+	if len(matches) < 2 {
+		log.Error().Str("body_preview", string(bodyBytes[:min(500, len(bodyBytes))])).Msg("CSRF token not found in login page")
+		return nil, fmt.Errorf("CSRF token not found in login page")
+	}
+	csrfToken := string(matches[1])
+	log.Debug().Msg("Got CSRF token from login page")
+
+	// Step 2: POST credentials to sign_in endpoint
+	loginReq := LoginRequest{
+		YCID:     ycid,
+		Password: password,
+		Captcha:  nil,
+		TOTP:     "",
+		Continue: "https://bookface.ycombinator.com/",
+	}
+	loginBody, err := json.Marshal(loginReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal login request: %w", err)
+	}
+
+	req, err = http.NewRequestWithContext(ctx, http.MethodPost, AccountURL+"/sign_in", strings.NewReader(string(loginBody)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create sign_in request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-CSRF-Token", csrfToken)
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+
+	log.Debug().Str("ycid", ycid).Msg("Submitting login credentials")
+	resp, err = httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("login request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	log.Debug().Int("status_code", resp.StatusCode).Int("body_length", len(respBody)).Msg("Login response received")
+
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		var loginResp LoginResponse
+		if json.Unmarshal(respBody, &loginResp) == nil && loginResp.Error != "" {
+			return nil, fmt.Errorf("authentication failed: %s", loginResp.Error)
+		}
+		return nil, fmt.Errorf("authentication failed: invalid credentials")
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("login failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	// Step 3: Extract _sso.key cookie from the cookie jar
+	// The cookie is set on .ycombinator.com domain
+	ycURL, _ := url.Parse("https://ycombinator.com")
+	var ssoKey string
+	for _, cookie := range jar.Cookies(ycURL) {
+		if cookie.Name == "_sso.key" {
+			ssoKey = cookie.Value
+			break
+		}
+	}
+
+	if ssoKey == "" {
+		// Also check account.ycombinator.com
+		accountURL, _ := url.Parse(AccountURL)
+		for _, cookie := range jar.Cookies(accountURL) {
+			if cookie.Name == "_sso.key" {
+				ssoKey = cookie.Value
+				break
+			}
+		}
+	}
+
+	if ssoKey == "" {
+		log.Error().Msg("_sso.key cookie not found in response")
+		return nil, fmt.Errorf("login succeeded but _sso.key cookie not found")
+	}
+
+	log.Info().Msg("Successfully logged in to YC SSO")
+	return &Credentials{
+		Cookies: fmt.Sprintf("_sso.key=%s", ssoKey),
+	}, nil
 }
 
 // ParseCookies parses a cookie header string and extracts individual cookies.

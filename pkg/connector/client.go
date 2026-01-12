@@ -9,6 +9,7 @@ import (
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/bridgev2/networkid"
+	"maunium.net/go/mautrix/bridgev2/status"
 	"maunium.net/go/mautrix/event"
 
 	"github.com/beeper/bookface/pkg/bookface"
@@ -24,12 +25,27 @@ var _ bridgev2.NetworkAPI = (*BookfaceClient)(nil)
 
 func (bc *BookfaceClient) Connect(ctx context.Context) {
 	// Validate credentials on connect
-	_, err := bc.Client.ValidateAuth(ctx)
+	user, err := bc.Client.ValidateAuth(ctx)
 	if err != nil {
 		bc.UserLogin.Log.Error().Err(err).Msg("Failed to validate auth on connect")
+		bc.UserLogin.BridgeState.Send(status.BridgeState{
+			StateEvent: status.StateBadCredentials,
+			Error:      "bookface-auth-failed",
+			Message:    err.Error(),
+		})
 		return
 	}
-	bc.UserLogin.Log.Info().Msg("Connected to Bookface")
+	bc.UserLogin.Log.Info().
+		Str("display_name", user.GetDisplayName()).
+		Str("hnid", user.HNID).
+		Msg("Connected to Bookface")
+	bc.UserLogin.BridgeState.Send(status.BridgeState{
+		StateEvent: status.StateConnected,
+		RemoteProfile: &status.RemoteProfile{
+			Name:     user.GetDisplayName(),
+			Username: user.HNID,
+		},
+	})
 }
 
 func (bc *BookfaceClient) Disconnect() {
