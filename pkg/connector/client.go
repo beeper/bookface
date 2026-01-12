@@ -3,6 +3,8 @@ package connector
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"strconv"
 	"time"
 
@@ -30,6 +32,7 @@ func (bc *BookfaceClient) Connect(ctx context.Context) {
 		bc.UserLogin.Log.Error().Err(err).Msg("Failed to validate auth on connect")
 		bc.UserLogin.BridgeState.Send(status.BridgeState{
 			StateEvent: status.StateBadCredentials,
+			RemoteID:   bc.UserLogin.ID,
 			Error:      "bookface-auth-failed",
 			Message:    err.Error(),
 		})
@@ -39,12 +42,36 @@ func (bc *BookfaceClient) Connect(ctx context.Context) {
 		Str("display_name", user.GetDisplayName()).
 		Str("hnid", user.HNID).
 		Msg("Connected to Bookface")
+
+	// Update own ghost with avatar to get mxc:// URL
+	metadata := bc.UserLogin.Metadata.(*UserLoginMetadata)
+	ownGhost, err := bc.UserLogin.Bridge.GetGhostByID(ctx, networkid.UserID(fmt.Sprintf("%d", metadata.UserID)))
+	if err != nil {
+		bc.UserLogin.Log.Warn().Err(err).Msg("Failed to get own ghost")
+	} else {
+		displayName := user.GetDisplayName()
+		ghostInfo := &bridgev2.UserInfo{
+			Name:   &displayName,
+			Avatar: makeAvatar(user.GetAvatarURL()),
+		}
+		ownGhost.UpdateInfo(ctx, ghostInfo)
+	}
+
+	// Update and save RemoteProfile
+	bc.UserLogin.RemoteName = user.HNID
+	bc.UserLogin.RemoteProfile = status.RemoteProfile{
+		Name:     user.GetDisplayName(),
+		Username: user.HNID,
+	}
+	if ownGhost != nil {
+		bc.UserLogin.RemoteProfile.Avatar = ownGhost.AvatarMXC
+	}
+	if err := bc.UserLogin.Save(ctx); err != nil {
+		bc.UserLogin.Log.Warn().Err(err).Msg("Failed to save user login")
+	}
+
 	bc.UserLogin.BridgeState.Send(status.BridgeState{
 		StateEvent: status.StateConnected,
-		RemoteProfile: &status.RemoteProfile{
-			Name:     user.GetDisplayName(),
-			Username: user.HNID,
-		},
 	})
 }
 
@@ -60,7 +87,13 @@ func (bc *BookfaceClient) IsLoggedIn() bool {
 }
 
 func (bc *BookfaceClient) LogoutRemote(ctx context.Context) {
-	// No remote logout needed for cookie-based auth
+	if bc.Client != nil {
+		if err := bc.Client.Logout(ctx); err != nil {
+			bc.UserLogin.Log.Warn().Err(err).Msg("Failed to logout from remote")
+		}
+	}
+	bc.Disconnect()
+	bc.Client = nil
 }
 
 func (bc *BookfaceClient) IsThisUser(ctx context.Context, userID networkid.UserID) bool {
@@ -135,18 +168,33 @@ func (bc *BookfaceClient) chatToInfo(chat *bookface.Chat) *bridgev2.ChatInfo {
 
 func (bc *BookfaceClient) userToGhostInfo(user *bookface.User) *bridgev2.UserInfo {
 	info := &bridgev2.UserInfo{
-		Name: &user.Name,
-	}
-	if user.AvatarURL != "" {
-		info.Avatar = &bridgev2.Avatar{
-			ID: networkid.AvatarID(user.AvatarURL),
-			Get: func(ctx context.Context) ([]byte, error) {
-				// TODO: Implement avatar fetching
-				return nil, nil
-			},
-		}
+		Name:   &user.Name,
+		Avatar: makeAvatar(user.AvatarURL),
 	}
 	return info
+}
+
+// makeAvatar creates a bridgev2.Avatar that downloads the avatar from the given URL.
+func makeAvatar(avatarURL string) *bridgev2.Avatar {
+	if avatarURL == "" {
+		return &bridgev2.Avatar{Remove: true}
+	}
+	return &bridgev2.Avatar{
+		ID: networkid.AvatarID(avatarURL),
+		Get: func(ctx context.Context) ([]byte, error) {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, avatarURL, nil)
+			if err != nil {
+				return nil, err
+			}
+			req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				return nil, err
+			}
+			defer resp.Body.Close()
+			return io.ReadAll(resp.Body)
+		},
+	}
 }
 
 // FetchMessages implements backfill support.

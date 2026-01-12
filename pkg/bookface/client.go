@@ -252,6 +252,51 @@ func (c *Client) GetAllMessages(ctx context.Context, chatID int64) ([]Message, e
 	return allMessages, nil
 }
 
+// Logout invalidates the current session by calling the logout endpoint.
+// The flow is: bookface/session/logout -> account.ycombinator.com/sign_out
+func (c *Client) Logout(ctx context.Context) error {
+	// Create a client that follows redirects and tracks cookies
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return fmt.Errorf("failed to create cookie jar: %w", err)
+	}
+
+	// Pre-populate the jar with our current cookies
+	baseURL, _ := url.Parse(c.baseURL)
+	jar.SetCookies(baseURL, []*http.Cookie{{
+		Name:  "_sso.key",
+		Value: strings.TrimPrefix(c.cookies, "_sso.key="),
+	}})
+
+	logoutClient := &http.Client{
+		Timeout: RequestTimeout,
+		Jar:     jar,
+	}
+
+	// Call the bookface logout endpoint - it will redirect to account.ycombinator.com/sign_out
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/session/logout", nil)
+	if err != nil {
+		return fmt.Errorf("failed to create logout request: %w", err)
+	}
+
+	req.Header.Set("Accept", "text/html")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+
+	c.log.Debug().Msg("Calling logout endpoint")
+	resp, err := logoutClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("logout request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	c.log.Debug().
+		Int("status_code", resp.StatusCode).
+		Str("final_url", resp.Request.URL.String()).
+		Msg("Logout response received")
+
+	return nil
+}
+
 // LoginRequest represents the request body for YC SSO login.
 type LoginRequest struct {
 	YCID     string  `json:"ycid"`
