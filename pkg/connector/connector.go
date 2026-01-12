@@ -7,7 +7,7 @@ import (
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
 
-	"go.mau.fi/mautrix-bookface/pkg/bookface"
+	"github.com/beeper/bookface/pkg/bookface"
 )
 
 // BookfaceConnector implements the mautrix bridgev2.NetworkConnector interface.

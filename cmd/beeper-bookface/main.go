@@ -3,7 +3,7 @@ package main
 import (
 	"maunium.net/go/mautrix/bridgev2/matrix/mxmain"
 
-	"go.mau.fi/mautrix-bookface/pkg/connector"
+	"github.com/beeper/bookface/pkg/connector"
 )
 
 // Information to find out exactly which commit the bridge was built from.
@@ -16,7 +16,7 @@ var (
 
 func main() {
 	m := mxmain.BridgeMain{
-		Name:        "mautrix-bookface",
+		Name:        "beeper-bookface",
 		URL:         "https://github.com/mautrix/bookface",
 		Description: "A Matrix-Bookface puppeting bridge",
 		Version:     "0.1.0",

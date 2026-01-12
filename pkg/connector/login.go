@@ -9,7 +9,7 @@ import (
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/bridgev2/status"
 
-	"go.mau.fi/mautrix-bookface/pkg/bookface"
+	"github.com/beeper/bookface/pkg/bookface"
 )
 
 // CookiesLogin implements the cookie-based login flow.

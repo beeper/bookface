@@ -1,4 +1,4 @@
-module go.mau.fi/mautrix-bookface
+module github.com/beeper/bookface
 
 go 1.25.5
 

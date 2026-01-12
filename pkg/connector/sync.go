@@ -8,7 +8,7 @@ import (
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 
-	"go.mau.fi/mautrix-bookface/pkg/bookface"
+	"github.com/beeper/bookface/pkg/bookface"
 )
 
 // SyncChats fetches all chats and syncs them to Matrix.

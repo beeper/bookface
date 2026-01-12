@@ -1,3 +1,3 @@
 #!/bin/bash
 cd "$(dirname "$0")"
-go build -o mautrix-bookface ./cmd/mautrix-bookface
+go build -o beeper-bookface ./cmd/beeper-bookface

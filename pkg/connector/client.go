@@ -11,7 +11,7 @@ import (
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/event"
 
-	"go.mau.fi/mautrix-bookface/pkg/bookface"
+	"github.com/beeper/bookface/pkg/bookface"
 )
 
 // BookfaceClient implements the mautrix NetworkAPI interface.
