@@ -271,8 +271,10 @@ cd /path/to/bridge
 ./build.sh
 
 # Run with bbctl (bridge name must start with sh-)
-bbctl -e staging run sh-mybridge --type bridgev2 \
-  --custom-startup-command "./mautrix-mybridge -c config.yaml"
+# Note: Use absolute path for the binary
+bbctl -e staging run --type bridgev2 \
+  --custom-startup-command "$(pwd)/mautrix-mybridge" \
+  sh-mybridge
 ```
 
 ### Key flags:
