@@ -1,0 +1,55 @@
+# Homeserver details
+homeserver:
+    # The address that this appservice can use to connect to the homeserver.
+    address: https://matrix.example.com
+    # The domain of the homeserver (for MXIDs, etc).
+    domain: example.com
+    # Whether or not to verify the SSL certificate of the homeserver.
+    verify_ssl: true
+
+# Application service host/registration related details
+appservice:
+    # The address that the homeserver can use to connect to this appservice.
+    address: http://localhost:29330
+    # The hostname to listen on.
+    hostname: 0.0.0.0
+    # The port to listen on.
+    port: 29330
+    # Database config.
+    database:
+        type: sqlite3-fk-wal
+        uri: bookface.db
+
+# Bridge config
+bridge:
+    # Localpart prefix for ghost users.
+    username_template: bookface_{{.}}
+    # Display name template for ghost users.
+    displayname_template: "{{.Name}} (Bookface)"
+    # Private chat portal name template
+    private_chat_portal_meta: false
+    # Should the bridge send a read receipt for messages from other users?
+    delivery_receipts: false
+    # Should the bridge update the avatar and name of the Matrix user when the Bookface profile is updated?
+    sync_direct_chat_list: false
+
+# Logging config
+logging:
+    # The directory for log files. Will be created if it doesn't exist.
+    directory: ./logs
+    # The naming template for log files.
+    file_name_format: "{{.Date}}-{{.Index}}.log"
+    # The date format for logging timestamps
+    file_date_format: "2006-01-02"
+    # The max size in megabytes before rotating log files. Set to 0 to disable rotation.
+    file_max_size: 100
+    # The max age in days before deleting log files. Set to 0 to disable automatic deletion.
+    file_max_age: 30
+    # Whether to compress old log files before deleting.
+    file_compress: false
+    # Whether to print a timestamp in the log message.
+    print_timestamp: true
+    # The minimum log level. Options: debug, info, warn, error, fatal.
+    min_level: debug
+    # Whether to print a stack trace for errors.
+    print_stack: false
