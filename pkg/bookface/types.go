@@ -67,13 +67,20 @@ type MediaUpload struct {
 	ThumbURL    string `json:"thumb_url"`
 }
 
+// ReactionUser represents the minimal user info in a reaction.
+type ReactionUser struct {
+	ID                 int64  `json:"id"`
+	Name               string `json:"name"`
+	CurrentCompanyName string `json:"current_company_name"`
+}
+
 // Reaction represents a reaction on a message.
 type Reaction struct {
-	ID        int64  `json:"id"`
-	MessageID int64  `json:"message_id"`
-	UserID    int64  `json:"user_id"`
-	Emoji     string `json:"emoji"`
-	User      *User  `json:"user,omitempty"`
+	EmojiID        string        `json:"emoji_id"`
+	EmojiVariant   *string       `json:"emoji_variant"`
+	ReactionableID int64         `json:"reactionable_id"`
+	User           *ReactionUser `json:"user,omitempty"`
+	CreatedAt      time.Time     `json:"created_at"`
 }
 
 // Message represents a chat message.

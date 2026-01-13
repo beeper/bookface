@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/enescakir/emoji"
 	"github.com/rs/zerolog"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/networkid"
@@ -115,6 +116,17 @@ func (bc *BookfaceClient) FetchMessages(ctx context.Context, params bridgev2.Fet
 	return &resp, nil
 }
 
+// shortcodeToEmoji converts emoji-mart shortcodes to unicode emoji.
+func shortcodeToEmoji(shortcode string) string {
+	// emoji library expects format ":shortcode:"
+	parsed := emoji.Parse(":" + shortcode + ":")
+	// If parsing failed (returned unchanged), use shortcode as-is
+	if parsed == ":"+shortcode+":" {
+		return shortcode
+	}
+	return parsed
+}
+
 // convertMessage converts a Bookface message to a bridgev2 BackfillMessage.
 func (bc *BookfaceClient) convertMessage(msg *bookface.Message) *bridgev2.BackfillMessage {
 	var userID int64
@@ -155,6 +167,19 @@ func (bc *BookfaceClient) convertMessage(msg *bookface.Message) *bridgev2.Backfi
 		parts = append(parts, mediaPart)
 	}
 
+	// Convert reactions
+	var reactions []*bridgev2.BackfillReaction
+	for _, reaction := range msg.Reactions {
+		if reaction.User != nil {
+			reactions = append(reactions, &bridgev2.BackfillReaction{
+				Sender:    bc.makeEventSender(reaction.User.ID),
+				Emoji:     shortcodeToEmoji(reaction.EmojiID),
+				EmojiID:   networkid.EmojiID(reaction.EmojiID),
+				Timestamp: reaction.CreatedAt,
+			})
+		}
+	}
+
 	return &bridgev2.BackfillMessage{
 		ConvertedMessage: &bridgev2.ConvertedMessage{
 			Parts: parts,
@@ -162,5 +187,6 @@ func (bc *BookfaceClient) convertMessage(msg *bookface.Message) *bridgev2.Backfi
 		Sender:    sender,
 		ID:        networkid.MessageID(fmt.Sprintf("%d", msg.ID)),
 		Timestamp: msg.CreatedAt,
+		Reactions: reactions,
 	}
 }
