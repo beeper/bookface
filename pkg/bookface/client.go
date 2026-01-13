@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -32,6 +33,7 @@ type Client struct {
 	cookies    string
 	csrfToken  string
 	log        zerolog.Logger
+	isLoggedIn atomic.Bool
 }
 
 // NewClient creates a new Bookface client with the given credentials.
@@ -51,6 +53,16 @@ func NewClient(creds *Credentials, log zerolog.Logger) *Client {
 func (c *Client) SetCredentials(creds *Credentials) {
 	c.cookies = creds.Cookies
 	c.csrfToken = creds.CSRFToken
+}
+
+// IsLoggedIn returns whether the client is currently logged in.
+func (c *Client) IsLoggedIn() bool {
+	return c.isLoggedIn.Load()
+}
+
+// SetLoggedIn sets the logged in state.
+func (c *Client) SetLoggedIn(loggedIn bool) {
+	c.isLoggedIn.Store(loggedIn)
 }
 
 // doRequest performs an HTTP request with the appropriate headers.

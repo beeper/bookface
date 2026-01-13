@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"time"
 
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
@@ -70,20 +69,24 @@ func (bc *BookfaceClient) Connect(ctx context.Context) {
 		bc.UserLogin.Log.Warn().Err(err).Msg("Failed to save user login")
 	}
 
+	bc.Client.SetLoggedIn(true)
 	bc.UserLogin.BridgeState.Send(status.BridgeState{
 		StateEvent: status.StateConnected,
 	})
+
+	// Sync chats in the background after connecting
+	go bc.SyncChats(context.WithoutCancel(ctx))
 }
 
 func (bc *BookfaceClient) Disconnect() {
+	if bc.Client != nil {
+		bc.Client.SetLoggedIn(false)
+	}
 	bc.UserLogin.Log.Info().Msg("Disconnected from Bookface")
 }
 
 func (bc *BookfaceClient) IsLoggedIn() bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	_, err := bc.Client.ValidateAuth(ctx)
-	return err == nil
+	return bc.Client != nil && bc.Client.IsLoggedIn()
 }
 
 func (bc *BookfaceClient) LogoutRemote(ctx context.Context) {
@@ -139,31 +142,54 @@ func (bc *BookfaceClient) GetUserInfo(ctx context.Context, ghost *bridgev2.Ghost
 	return nil, nil
 }
 
+// makeEventSender creates an EventSender for a user ID, setting IsFromMe if it's the logged-in user.
+func (bc *BookfaceClient) makeEventSender(userID int64) bridgev2.EventSender {
+	metadata := bc.UserLogin.Metadata.(*UserLoginMetadata)
+	return bridgev2.EventSender{
+		IsFromMe: userID == metadata.UserID,
+		Sender:   networkid.UserID(fmt.Sprintf("%d", userID)),
+	}
+}
+
 func (bc *BookfaceClient) chatToInfo(chat *bookface.Chat) *bridgev2.ChatInfo {
 	chatType := database.RoomTypeDefault
 	if chat.IsDM {
 		chatType = database.RoomTypeDM
 	}
 
-	members := &bridgev2.ChatMemberList{
-		IsFull: true,
-	}
-
+	// Build member map for all valid users (including ourselves)
+	memberMap := make(map[networkid.UserID]bridgev2.ChatMember)
 	for _, cu := range chat.ChatUsers {
-		members.Members = append(members.Members, bridgev2.ChatMember{
-			EventSender: bridgev2.EventSender{
-				Sender: networkid.UserID(fmt.Sprintf("%d", cu.UserID)),
+		if cu.User == nil || cu.User.ID == 0 || cu.Deleted {
+			continue
+		}
+		userID := networkid.UserID(fmt.Sprintf("%d", cu.User.ID))
+		displayName := cu.User.GetDisplayName()
+		memberMap[userID] = bridgev2.ChatMember{
+			EventSender: bc.makeEventSender(cu.User.ID),
+			Membership:  event.MembershipJoin,
+			UserInfo: &bridgev2.UserInfo{
+				Name:   &displayName,
+				Avatar: makeAvatar(cu.User.GetAvatarURL()),
 			},
-			Membership: event.MembershipJoin,
-		})
+		}
 	}
 
-	return &bridgev2.ChatInfo{
-		Name:        &chat.Name,
+	members := &bridgev2.ChatMemberList{
+		IsFull:    true,
+		MemberMap: memberMap,
+	}
+
+	chatInfo := &bridgev2.ChatInfo{
 		Type:        &chatType,
 		Members:     members,
 		CanBackfill: true,
 	}
+	// Only set name if non-empty; for DMs the bridge will use participant names
+	if chat.Name != "" {
+		chatInfo.Name = &chat.Name
+	}
+	return chatInfo
 }
 
 func (bc *BookfaceClient) userToGhostInfo(user *bookface.User) *bridgev2.UserInfo {
@@ -194,87 +220,6 @@ func makeAvatar(avatarURL string) *bridgev2.Avatar {
 			defer resp.Body.Close()
 			return io.ReadAll(resp.Body)
 		},
-	}
-}
-
-// FetchMessages implements backfill support.
-func (bc *BookfaceClient) FetchMessages(ctx context.Context, params bridgev2.FetchMessagesParams) (*bridgev2.FetchMessagesResponse, error) {
-	chatID, err := strconv.ParseInt(string(params.Portal.ID), 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("invalid chat ID: %w", err)
-	}
-
-	var before *int64
-	if params.AnchorMessage != nil {
-		msgID, err := strconv.ParseInt(string(params.AnchorMessage.ID), 10, 64)
-		if err == nil {
-			before = &msgID
-		}
-	}
-
-	resp, err := bc.Client.GetMessages(ctx, chatID, before)
-	if err != nil {
-		return nil, err
-	}
-
-	var messages []*bridgev2.BackfillMessage
-	for _, msg := range resp.Messages {
-		converted := bc.convertMessage(&msg)
-		if converted != nil {
-			messages = append(messages, converted)
-		}
-	}
-
-	return &bridgev2.FetchMessagesResponse{
-		Messages: messages,
-		HasMore:  resp.HasMoreBefore,
-		Forward:  false,
-	}, nil
-}
-
-func (bc *BookfaceClient) convertMessage(msg *bookface.Message) *bridgev2.BackfillMessage {
-	sender := bridgev2.EventSender{
-		Sender: networkid.UserID(fmt.Sprintf("%d", msg.UserID)),
-	}
-
-	content := &event.MessageEventContent{
-		MsgType:       event.MsgText,
-		Body:          msg.Content,
-		FormattedBody: msg.HTMLContent,
-	}
-	if msg.HTMLContent != "" {
-		content.Format = event.FormatHTML
-	}
-
-	parts := []*bridgev2.ConvertedMessagePart{{
-		ID:      networkid.PartID(""),
-		Type:    event.EventMessage,
-		Content: content,
-	}}
-
-	// Handle media uploads - store URL in Extra for later processing
-	for _, media := range msg.MediaUploads {
-		mediaPart := &bridgev2.ConvertedMessagePart{
-			ID:   networkid.PartID(fmt.Sprintf("media_%d", media.ID)),
-			Type: event.EventMessage,
-			Content: &event.MessageEventContent{
-				MsgType: event.MsgFile,
-				Body:    media.Filename,
-			},
-			Extra: map[string]any{
-				"bookface_media_url": media.URL,
-			},
-		}
-		parts = append(parts, mediaPart)
-	}
-
-	return &bridgev2.BackfillMessage{
-		ConvertedMessage: &bridgev2.ConvertedMessage{
-			Parts: parts,
-		},
-		Sender:    sender,
-		ID:        networkid.MessageID(fmt.Sprintf("%d", msg.ID)),
-		Timestamp: msg.CreatedAt,
 	}
 }
 

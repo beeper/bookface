@@ -124,6 +124,9 @@ func (pl *PasswordLogin) SubmitUserInput(ctx context.Context, input map[string]s
 		return nil, fmt.Errorf("failed to create login: %w", err)
 	}
 
+	// Connect to start syncing chats
+	ul.Client.Connect(ul.Log.WithContext(context.Background()))
+
 	return &bridgev2.LoginStep{
 		Type:         bridgev2.LoginStepTypeComplete,
 		StepID:       "fi.mau.bookface.complete",

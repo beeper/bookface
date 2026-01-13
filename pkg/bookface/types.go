@@ -53,12 +53,9 @@ func (u *User) GetAvatarURL() string {
 
 // ChatUser represents a user within a chat context.
 type ChatUser struct {
-	ID          int64  `json:"id"`
-	ChatID      int64  `json:"chat_id"`
-	UserID      int64  `json:"user_id"`
-	Name        string `json:"name"`
-	Slug        string `json:"slug"`
-	AvatarThumb string `json:"avatar_thumb"`
+	User    *User  `json:"user"`
+	Role    string `json:"role"`
+	Deleted bool   `json:"deleted"`
 }
 
 // MediaUpload represents an uploaded file/image in a message.
