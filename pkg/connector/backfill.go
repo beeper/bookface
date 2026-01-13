@@ -35,18 +35,23 @@ func (bc *BookfaceClient) FetchMessages(ctx context.Context, params bridgev2.Fet
 		Forward: params.Forward,
 	}
 
-	// Determine pagination - use anchor message ID for backward backfill
-	var before *int64
-	if params.AnchorMessage != nil && !params.Forward {
+	// Determine pagination based on direction
+	var beforeID, afterID *int64
+	if params.AnchorMessage != nil {
 		msgID, err := strconv.ParseInt(string(params.AnchorMessage.ID), 10, 64)
 		if err == nil {
-			before = &msgID
-			log = log.With().Int64("before", msgID).Logger()
+			if params.Forward {
+				afterID = &msgID
+				log = log.With().Int64("after_id", msgID).Logger()
+			} else {
+				beforeID = &msgID
+				log = log.With().Int64("before_id", msgID).Logger()
+			}
 		}
 	}
 
 	// Fetch messages from API
-	apiResp, err := bc.Client.GetMessages(ctx, chatID, before)
+	apiResp, err := bc.Client.GetMessages(ctx, chatID, beforeID, afterID)
 	if err != nil {
 		return nil, err
 	}
@@ -60,22 +65,18 @@ func (bc *BookfaceClient) FetchMessages(ctx context.Context, params bridgev2.Fet
 	// Convert messages
 	for i := range apiResp.Messages {
 		msg := &apiResp.Messages[i]
-
-		// For forward backfill, skip messages before anchor
-		if params.Forward && params.AnchorMessage != nil {
-			if !msg.CreatedAt.After(params.AnchorMessage.Timestamp) {
-				log.Debug().Int64("msg_id", msg.ID).Msg("Skipping message before anchor")
-				continue
-			}
-		}
-
 		converted := bc.convertMessage(msg)
 		if converted != nil {
 			resp.Messages = append(resp.Messages, converted)
 		}
 	}
 
-	resp.HasMore = apiResp.HasMoreBefore
+	// Use correct HasMore based on direction
+	if params.Forward {
+		resp.HasMore = apiResp.HasMoreAfter
+	} else {
+		resp.HasMore = apiResp.HasMoreBefore
+	}
 	log.Debug().
 		Int("message_count", len(resp.Messages)).
 		Bool("has_more", resp.HasMore).

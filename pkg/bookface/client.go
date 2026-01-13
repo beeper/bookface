@@ -216,10 +216,14 @@ func (c *Client) GetAllChats(ctx context.Context) ([]Chat, error) {
 }
 
 // GetMessages fetches messages for a chat with optional pagination.
-func (c *Client) GetMessages(ctx context.Context, chatID int64, before *int64) (*MessagesResponse, error) {
+// Use beforeID to fetch older messages (backward pagination).
+// Use afterID to fetch newer messages (forward pagination).
+func (c *Client) GetMessages(ctx context.Context, chatID int64, beforeID, afterID *int64) (*MessagesResponse, error) {
 	path := fmt.Sprintf("/messages/%d/chat_messages", chatID)
-	if before != nil {
-		path += "?before=" + strconv.FormatInt(*before, 10)
+	if beforeID != nil {
+		path += "?before_id=" + strconv.FormatInt(*beforeID, 10)
+	} else if afterID != nil {
+		path += "?after_id=" + strconv.FormatInt(*afterID, 10)
 	}
 
 	var resp MessagesResponse
@@ -245,10 +249,10 @@ func (c *Client) GetChatUsers(ctx context.Context, chatID int64) (*ChatUsersResp
 // GetAllMessages fetches all messages for a chat by paginating backwards.
 func (c *Client) GetAllMessages(ctx context.Context, chatID int64) ([]Message, error) {
 	var allMessages []Message
-	var before *int64
+	var beforeID *int64
 
 	for {
-		resp, err := c.GetMessages(ctx, chatID, before)
+		resp, err := c.GetMessages(ctx, chatID, beforeID, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -267,7 +271,7 @@ func (c *Client) GetAllMessages(ctx context.Context, chatID int64) ([]Message, e
 				oldestID = msg.ID
 			}
 		}
-		before = &oldestID
+		beforeID = &oldestID
 
 		// Small delay to avoid rate limiting
 		time.Sleep(100 * time.Millisecond)
