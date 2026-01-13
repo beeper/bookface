@@ -37,15 +37,30 @@ func (bc *BookfaceClient) FetchMessages(ctx context.Context, params bridgev2.Fet
 
 	// Determine pagination based on direction
 	var beforeID, afterID *int64
-	if params.AnchorMessage != nil {
-		msgID, err := strconv.ParseInt(string(params.AnchorMessage.ID), 10, 64)
-		if err == nil {
-			if params.Forward {
+
+	if params.Forward {
+		// Forward backfill: use AnchorMessage to get messages after it
+		if params.AnchorMessage != nil {
+			msgID, err := strconv.ParseInt(string(params.AnchorMessage.ID), 10, 64)
+			if err == nil {
 				afterID = &msgID
 				log = log.With().Int64("after_id", msgID).Logger()
-			} else {
+			}
+		}
+	} else {
+		// Backward backfill: prefer Cursor (from previous batch), fall back to AnchorMessage
+		// The Cursor is persisted by mautrix-go's backfill_task table for resumption
+		if params.Cursor != "" {
+			msgID, err := strconv.ParseInt(string(params.Cursor), 10, 64)
+			if err == nil {
 				beforeID = &msgID
-				log = log.With().Int64("before_id", msgID).Logger()
+				log = log.With().Int64("before_id_from_cursor", msgID).Logger()
+			}
+		} else if params.AnchorMessage != nil {
+			msgID, err := strconv.ParseInt(string(params.AnchorMessage.ID), 10, 64)
+			if err == nil {
+				beforeID = &msgID
+				log = log.With().Int64("before_id_from_anchor", msgID).Logger()
 			}
 		}
 	}
@@ -62,7 +77,15 @@ func (bc *BookfaceClient) FetchMessages(ctx context.Context, params bridgev2.Fet
 
 	log.Debug().Int("api_message_count", len(apiResp.Messages)).Msg("Got messages from API")
 
-	// Convert messages
+	// Track oldest message ID for cursor (even if conversion fails)
+	var oldestMsgID int64
+	for _, msg := range apiResp.Messages {
+		if oldestMsgID == 0 || msg.ID < oldestMsgID {
+			oldestMsgID = msg.ID
+		}
+	}
+
+	// Convert messages (API returns them in chronological order already)
 	for i := range apiResp.Messages {
 		msg := &apiResp.Messages[i]
 		converted := bc.convertMessage(msg)
@@ -76,10 +99,17 @@ func (bc *BookfaceClient) FetchMessages(ctx context.Context, params bridgev2.Fet
 		resp.HasMore = apiResp.HasMoreAfter
 	} else {
 		resp.HasMore = apiResp.HasMoreBefore
+		// Set cursor to oldest message ID for backward backfill resumption
+		// mautrix-go persists this in backfill_task table and passes it back on next call
+		if oldestMsgID > 0 {
+			resp.Cursor = networkid.PaginationCursor(strconv.FormatInt(oldestMsgID, 10))
+		}
 	}
+
 	log.Debug().
 		Int("message_count", len(resp.Messages)).
 		Bool("has_more", resp.HasMore).
+		Str("cursor", string(resp.Cursor)).
 		Msg("Returning backfill response")
 
 	return &resp, nil
