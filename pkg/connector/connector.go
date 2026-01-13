@@ -12,7 +12,8 @@ import (
 
 // BookfaceConnector implements the mautrix bridgev2.NetworkConnector interface.
 type BookfaceConnector struct {
-	Bridge *bridgev2.Bridge
+	Bridge      *bridgev2.Bridge
+	DirectMedia bool
 }
 
 var _ bridgev2.NetworkConnector = (*BookfaceConnector)(nil)

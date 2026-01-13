@@ -230,6 +230,18 @@ func (c *Client) GetMessages(ctx context.Context, chatID int64, before *int64) (
 	return &resp, nil
 }
 
+// GetChatUsers fetches the full member list for a chat.
+func (c *Client) GetChatUsers(ctx context.Context, chatID int64) (*ChatUsersResponse, error) {
+	path := fmt.Sprintf("/messages/%d/chat_users", chatID)
+
+	var resp ChatUsersResponse
+	if err := c.doJSONRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+
+	return &resp, nil
+}
+
 // GetAllMessages fetches all messages for a chat by paginating backwards.
 func (c *Client) GetAllMessages(ctx context.Context, chatID int64) ([]Message, error) {
 	var allMessages []Message

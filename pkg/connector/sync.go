@@ -37,9 +37,17 @@ func (bc *BookfaceClient) syncChat(ctx context.Context, chat *bookface.Chat) {
 		Receiver: bc.UserLogin.ID,
 	}
 
-	chatInfo := bc.chatToInfo(chat)
+	// Fetch full member list from /chat_users endpoint
+	chatUsersResp, err := bc.Client.GetChatUsers(ctx, chat.ID)
+	if err != nil {
+		bc.UserLogin.Log.Warn().Err(err).Int64("chat_id", chat.ID).Msg("Failed to fetch chat users, using partial list")
+	} else {
+		chat.ChatUsers = chatUsersResp.ChatUsers
+	}
 
-	// Get our own user ID to skip ourselves
+	chatInfo := bc.chatToInfo(ctx, chat)
+
+	// Get our own user ID to skip ourselves for ghost syncing
 	metadata := bc.UserLogin.Metadata.(*UserLoginMetadata)
 	ownUserID := metadata.UserID
 
@@ -51,10 +59,6 @@ func (bc *BookfaceClient) syncChat(ctx context.Context, chat *bookface.Chat) {
 
 	for _, cu := range chat.ChatUsers {
 		if cu.User == nil || cu.User.ID == 0 || cu.Deleted {
-			bc.UserLogin.Log.Debug().
-				Bool("user_nil", cu.User == nil).
-				Bool("deleted", cu.Deleted).
-				Msg("Skipping invalid/deleted chat user")
 			continue
 		}
 		// Skip ourselves - we're not a ghost
@@ -68,14 +72,9 @@ func (bc *BookfaceClient) syncChat(ctx context.Context, chat *bookface.Chat) {
 			continue
 		}
 		displayName := cu.User.GetDisplayName()
-		bc.UserLogin.Log.Debug().
-			Int64("user_id", cu.User.ID).
-			Str("display_name", displayName).
-			Str("avatar_url", cu.User.GetAvatarURL()).
-			Msg("Updating ghost info")
 		ghost.UpdateInfo(ctx, &bridgev2.UserInfo{
 			Name:   &displayName,
-			Avatar: makeAvatar(cu.User.GetAvatarURL()),
+			Avatar: bc.makeAvatar(ctx, cu.User.GetAvatarURL()),
 		})
 	}
 

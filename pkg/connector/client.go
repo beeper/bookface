@@ -51,7 +51,7 @@ func (bc *BookfaceClient) Connect(ctx context.Context) {
 		displayName := user.GetDisplayName()
 		ghostInfo := &bridgev2.UserInfo{
 			Name:   &displayName,
-			Avatar: makeAvatar(user.GetAvatarURL()),
+			Avatar: bc.makeAvatar(ctx, user.GetAvatarURL()),
 		}
 		ownGhost.UpdateInfo(ctx, ghostInfo)
 	}
@@ -130,7 +130,7 @@ func (bc *BookfaceClient) GetChatInfo(ctx context.Context, portal *bridgev2.Port
 
 	for _, chat := range chats {
 		if chat.ID == chatID {
-			return bc.chatToInfo(&chat), nil
+			return bc.chatToInfo(ctx, &chat), nil
 		}
 	}
 
@@ -151,7 +151,7 @@ func (bc *BookfaceClient) makeEventSender(userID int64) bridgev2.EventSender {
 	}
 }
 
-func (bc *BookfaceClient) chatToInfo(chat *bookface.Chat) *bridgev2.ChatInfo {
+func (bc *BookfaceClient) chatToInfo(ctx context.Context, chat *bookface.Chat) *bridgev2.ChatInfo {
 	chatType := database.RoomTypeDefault
 	if chat.IsDM {
 		chatType = database.RoomTypeDM
@@ -170,7 +170,7 @@ func (bc *BookfaceClient) chatToInfo(chat *bookface.Chat) *bridgev2.ChatInfo {
 			Membership:  event.MembershipJoin,
 			UserInfo: &bridgev2.UserInfo{
 				Name:   &displayName,
-				Avatar: makeAvatar(cu.User.GetAvatarURL()),
+				Avatar: bc.makeAvatar(ctx, cu.User.GetAvatarURL()),
 			},
 		}
 	}
@@ -192,19 +192,37 @@ func (bc *BookfaceClient) chatToInfo(chat *bookface.Chat) *bridgev2.ChatInfo {
 	return chatInfo
 }
 
-func (bc *BookfaceClient) userToGhostInfo(user *bookface.User) *bridgev2.UserInfo {
+func (bc *BookfaceClient) userToGhostInfo(ctx context.Context, user *bookface.User) *bridgev2.UserInfo {
 	info := &bridgev2.UserInfo{
 		Name:   &user.Name,
-		Avatar: makeAvatar(user.AvatarURL),
+		Avatar: bc.makeAvatar(ctx, user.AvatarURL),
 	}
 	return info
 }
 
-// makeAvatar creates a bridgev2.Avatar that downloads the avatar from the given URL.
-func makeAvatar(avatarURL string) *bridgev2.Avatar {
+// makeAvatar creates a bridgev2.Avatar for the given URL.
+// When direct media is enabled, it returns a direct media URI that redirects to the S3 URL.
+// Otherwise, it returns a callback that downloads the avatar.
+func (bc *BookfaceClient) makeAvatar(ctx context.Context, avatarURL string) *bridgev2.Avatar {
 	if avatarURL == "" {
 		return &bridgev2.Avatar{Remove: true}
 	}
+
+	connector := bc.UserLogin.Bridge.Network.(*BookfaceConnector)
+	if connector.DirectMedia {
+		mediaID := MakeAvatarMediaID(avatarURL)
+		mxc, err := bc.UserLogin.Bridge.Matrix.GenerateContentURI(ctx, mediaID)
+		if err != nil {
+			bc.UserLogin.Log.Warn().Err(err).Str("avatar_url", avatarURL).Msg("Failed to generate direct media URI for avatar")
+			// Fall back to download method
+		} else {
+			return &bridgev2.Avatar{
+				ID:  networkid.AvatarID(avatarURL),
+				MXC: mxc,
+			}
+		}
+	}
+
 	return &bridgev2.Avatar{
 		ID: networkid.AvatarID(avatarURL),
 		Get: func(ctx context.Context) ([]byte, error) {

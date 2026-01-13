@@ -117,6 +117,12 @@ type MessagesResponse struct {
 	HasMoreAfter  bool      `json:"has_more_after"`
 }
 
+// ChatUsersResponse is the response from /messages/<chat_id>/chat_users.
+type ChatUsersResponse struct {
+	ChatID    int64      `json:"chat_id"`
+	ChatUsers []ChatUser `json:"chat_users"`
+}
+
 // ApplicationShellResponse is the response from /messages/application_shell.json.
 type ApplicationShellResponse struct {
 	CurrentUser *User `json:"current_user"`
