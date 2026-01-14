@@ -127,14 +127,9 @@ func shortcodeToEmoji(shortcode string) string {
 	return parsed
 }
 
-// convertMessage converts a Bookface message to a bridgev2 BackfillMessage.
-func (bc *BookfaceClient) convertMessage(msg *bookface.Message) *bridgev2.BackfillMessage {
-	var userID int64
-	if msg.User != nil {
-		userID = msg.User.ID
-	}
-	sender := bc.makeEventSender(userID)
-
+// convertToMatrix converts a Bookface message to a bridgev2 ConvertedMessage.
+// This is the shared conversion function used by both backfill and real-time events.
+func (bc *BookfaceClient) convertToMatrix(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, msg *bookface.Message) (*bridgev2.ConvertedMessage, error) {
 	// Build text content
 	content := &event.MessageEventContent{
 		MsgType: event.MsgText,
@@ -167,11 +162,15 @@ func (bc *BookfaceClient) convertMessage(msg *bookface.Message) *bridgev2.Backfi
 		parts = append(parts, mediaPart)
 	}
 
-	// Convert reactions
-	var reactions []*bridgev2.BackfillReaction
-	for _, reaction := range msg.Reactions {
+	return &bridgev2.ConvertedMessage{Parts: parts}, nil
+}
+
+// convertReactionsToBackfill converts Bookface reactions to BackfillReaction slice.
+func (bc *BookfaceClient) convertReactionsToBackfill(reactions []bookface.Reaction) []*bridgev2.BackfillReaction {
+	var result []*bridgev2.BackfillReaction
+	for _, reaction := range reactions {
 		if reaction.User != nil {
-			reactions = append(reactions, &bridgev2.BackfillReaction{
+			result = append(result, &bridgev2.BackfillReaction{
 				Sender:    bc.makeEventSender(reaction.User.ID),
 				Emoji:     shortcodeToEmoji(reaction.EmojiID),
 				EmojiID:   networkid.EmojiID(reaction.EmojiID),
@@ -179,14 +178,27 @@ func (bc *BookfaceClient) convertMessage(msg *bookface.Message) *bridgev2.Backfi
 			})
 		}
 	}
+	return result
+}
+
+// convertMessage converts a Bookface message to a bridgev2 BackfillMessage.
+func (bc *BookfaceClient) convertMessage(msg *bookface.Message) *bridgev2.BackfillMessage {
+	var userID int64
+	if msg.User != nil {
+		userID = msg.User.ID
+	}
+
+	converted, err := bc.convertToMatrix(context.Background(), nil, nil, msg)
+	if err != nil {
+		bc.UserLogin.Log.Warn().Err(err).Int64("message_id", msg.ID).Msg("Failed to convert message to Matrix format")
+		return nil
+	}
 
 	return &bridgev2.BackfillMessage{
-		ConvertedMessage: &bridgev2.ConvertedMessage{
-			Parts: parts,
-		},
-		Sender:    sender,
-		ID:        networkid.MessageID(fmt.Sprintf("%d", msg.ID)),
-		Timestamp: msg.CreatedAt,
-		Reactions: reactions,
+		ConvertedMessage: converted,
+		Sender:           bc.makeEventSender(userID),
+		ID:               networkid.MessageID(fmt.Sprintf("%d", msg.ID)),
+		Timestamp:        msg.CreatedAt,
+		Reactions:        bc.convertReactionsToBackfill(msg.Reactions),
 	}
 }

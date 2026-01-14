@@ -18,8 +18,9 @@ import (
 
 // BookfaceClient implements the mautrix NetworkAPI interface.
 type BookfaceClient struct {
-	UserLogin *bridgev2.UserLogin
-	Client    *bookface.Client
+	UserLogin   *bridgev2.UserLogin
+	Client      *bookface.Client
+	actionCable *bookface.ActionCable
 }
 
 var _ bridgev2.NetworkAPI = (*BookfaceClient)(nil)
@@ -74,11 +75,17 @@ func (bc *BookfaceClient) Connect(ctx context.Context) {
 		StateEvent: status.StateConnected,
 	})
 
+	// Start WebSocket for real-time updates
+	if err := bc.StartWebSocket(ctx); err != nil {
+		bc.UserLogin.Log.Warn().Err(err).Msg("Failed to start WebSocket, falling back to polling")
+	}
+
 	// Sync chats in the background after connecting
 	go bc.SyncChats(context.WithoutCancel(ctx))
 }
 
 func (bc *BookfaceClient) Disconnect() {
+	bc.StopWebSocket()
 	if bc.Client != nil {
 		bc.Client.SetLoggedIn(false)
 	}
@@ -241,8 +248,3 @@ func (bc *BookfaceClient) makeAvatar(ctx context.Context, avatarURL string) *bri
 	}
 }
 
-// HandleMatrixMessage handles outgoing messages from Matrix.
-func (bc *BookfaceClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.MatrixMessage) (*bridgev2.MatrixMessageResponse, error) {
-	// TODO: Implement sending messages to Bookface
-	return nil, fmt.Errorf("sending messages is not yet implemented")
-}
