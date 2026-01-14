@@ -22,6 +22,9 @@ func (bc *BookfaceClient) handleActionCableEvent(evt *bookface.ActionCableEvent)
 	case "chat_message_updated":
 		bc.handleMessageUpdated(evt.ChatID, evt.Message)
 
+	case "chat_message_deleted":
+		bc.handleMessageDeleted(evt.ChatID, evt.Message)
+
 	case "user_last_active_on_chat_at":
 		log.Debug().
 			Int64("user_id", evt.UserID).
@@ -95,6 +98,38 @@ func (bc *BookfaceClient) handleMessageUpdated(chatID int64, msg *bookface.Messa
 	})
 
 	log.Debug().Int("reaction_count", len(msg.Reactions)).Msg("Queued real-time message and reaction sync events")
+}
+
+// handleMessageDeleted processes a real-time message deletion.
+func (bc *BookfaceClient) handleMessageDeleted(chatID int64, msg *bookface.Message) {
+	if msg == nil {
+		bc.UserLogin.Log.Warn().Int64("chat_id", chatID).Msg("Received nil message in delete event")
+		return
+	}
+
+	log := bc.UserLogin.Log.With().
+		Int64("chat_id", chatID).
+		Int64("message_id", msg.ID).
+		Logger()
+
+	log.Debug().Msg("Processing real-time message deletion")
+
+	portalKey := networkid.PortalKey{
+		ID:       networkid.PortalID(fmt.Sprintf("%d", chatID)),
+		Receiver: bc.UserLogin.ID,
+	}
+
+	// Queue the message removal event
+	bc.UserLogin.QueueRemoteEvent(&simplevent.MessageRemove{
+		EventMeta: simplevent.EventMeta{
+			Type:      bridgev2.RemoteEventMessageRemove,
+			PortalKey: portalKey,
+			Sender:    bc.makeEventSender(msg.UserID),
+		},
+		TargetMessage: networkid.MessageID(fmt.Sprintf("%d", msg.ID)),
+	})
+
+	log.Debug().Msg("Queued real-time message deletion event")
 }
 
 // buildReactionSyncData converts Bookface reactions to a ReactionSyncData structure.

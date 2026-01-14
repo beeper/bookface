@@ -114,10 +114,11 @@ func (bc *BookfaceClient) IsThisUser(ctx context.Context, userID networkid.UserI
 func (bc *BookfaceClient) GetCapabilities(ctx context.Context, portal *bridgev2.Portal) *event.RoomFeatures {
 	return &event.RoomFeatures{
 		MaxTextLength: 10000,
-		Reply:         event.CapLevelDropped,
-		Edit:          event.CapLevelDropped,
-		Delete:        event.CapLevelDropped,
-		Reaction:      event.CapLevelDropped,
+		Reply:         event.CapLevelFullySupported,
+		Thread:        event.CapLevelFullySupported,
+		Edit:          event.CapLevelFullySupported,
+		Delete:        event.CapLevelFullySupported,
+		Reaction:      event.CapLevelFullySupported,
 		ReadReceipts:  false,
 	}
 }

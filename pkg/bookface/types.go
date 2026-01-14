@@ -95,6 +95,7 @@ type Message struct {
 	User         *User         `json:"user,omitempty"`
 	MediaUploads []MediaUpload `json:"media_uploads,omitempty"`
 	Reactions    []Reaction    `json:"reactions,omitempty"`
+	ThreadID     *int64        `json:"thread_id,omitempty"`
 }
 
 // Chat represents a conversation/chat room.
@@ -139,4 +140,55 @@ type ApplicationShellResponse struct {
 type Credentials struct {
 	Cookies   string `json:"cookies"`
 	CSRFToken string `json:"csrf_token"`
+}
+
+// SendMessageRequest is the request body for sending a message.
+type SendMessageRequest struct {
+	ChatMessage SendMessagePayload `json:"chat_message"`
+}
+
+// SendMessagePayload is the inner payload for sending a message.
+type SendMessagePayload struct {
+	ChatID          int64    `json:"chat_id"`
+	Content         string   `json:"content"`
+	MediaUploads    []any    `json:"media_uploads"`
+	ClientMessageID string   `json:"client_message_id"`
+	VersionNumber   int      `json:"version_number"`
+	ThreadID        *int64   `json:"thread_id"`
+	Referrer        string   `json:"referrer"`
+}
+
+// EditMessageRequest is the request body for editing a message.
+type EditMessageRequest struct {
+	Content         string `json:"content"`
+	MessageID       int64  `json:"message_id"`
+	ClientMessageID string `json:"client_message_id"`
+	ClientID        string `json:"client_id"`
+	VersionNumber   int    `json:"version_number"`
+}
+
+// DeleteMessageRequest is the request body for deleting a message.
+type DeleteMessageRequest struct {
+	MessageID       int64  `json:"message_id"`
+	ClientMessageID string `json:"client_message_id"`
+}
+
+// SendReactionRequest is the request body for adding a reaction.
+type SendReactionRequest struct {
+	EmojiID         string  `json:"emoji_id"`
+	EmojiVariant    *string `json:"emoji_variant"`
+	UserID          int64   `json:"user_id"`
+	ReactionableID  int64   `json:"reactionable_id"`
+	ReactionableType string `json:"reactionable_type"`
+	ClientID        string  `json:"client_id"`
+}
+
+// SendReactionResponse is the response from adding a reaction.
+type SendReactionResponse struct {
+	EmojiID          string        `json:"emoji_id"`
+	EmojiVariant     *string       `json:"emoji_variant"`
+	ReactionableType string        `json:"reactionable_type"`
+	ReactionableID   int64         `json:"reactionable_id"`
+	User             *ReactionUser `json:"user"`
+	CreatedAt        time.Time     `json:"created_at"`
 }

@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 )
 
@@ -105,6 +106,53 @@ func (c *Client) doJSONRequest(ctx context.Context, method, path string, body io
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	if result != nil {
+		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+			return fmt.Errorf("failed to decode response: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// doJSONPostRequest performs a JSON POST request and decodes the response.
+func (c *Client) doJSONPostRequest(ctx context.Context, path string, payload interface{}, result interface{}) error {
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	reqURL := c.baseURL + path
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, strings.NewReader(string(bodyBytes)))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Cookie", c.cookies)
+	req.Header.Set("X-CSRF-Token", c.csrfToken)
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Referer", c.baseURL+"/messages")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+
+	c.log.Debug().Str("method", "POST").Str("url", reqURL).Int("body_length", len(bodyBytes)).Msg("Making JSON POST request")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return fmt.Errorf("authentication failed (status %d): please re-provision", resp.StatusCode)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	if result != nil {
@@ -278,6 +326,141 @@ func (c *Client) GetAllMessages(ctx context.Context, chatID int64) ([]Message, e
 	}
 
 	return allMessages, nil
+}
+
+// SendMessage sends a message to a chat.
+func (c *Client) SendMessage(ctx context.Context, chatID int64, content, clientMessageID string) (*Message, error) {
+	return c.SendMessageWithThread(ctx, chatID, content, clientMessageID, nil)
+}
+
+// SendMessageWithThread sends a message to a chat, optionally as a reply in a thread.
+func (c *Client) SendMessageWithThread(ctx context.Context, chatID int64, content, clientMessageID string, threadID *int64) (*Message, error) {
+	path := fmt.Sprintf("/messages/%d/chat_messages", chatID)
+
+	// Build referrer URL - include thread ID if replying
+	referrer := fmt.Sprintf("%s/messages/%d", c.baseURL, chatID)
+	if threadID != nil {
+		referrer = fmt.Sprintf("%s/messages/%d/%d", c.baseURL, chatID, *threadID)
+	}
+
+	req := SendMessageRequest{
+		ChatMessage: SendMessagePayload{
+			ChatID:          chatID,
+			Content:         content,
+			MediaUploads:    []any{},
+			ClientMessageID: clientMessageID,
+			VersionNumber:   2,
+			ThreadID:        threadID,
+			Referrer:        referrer,
+		},
+	}
+
+	var msg Message
+	if err := c.doJSONPostRequest(ctx, path, req, &msg); err != nil {
+		return nil, fmt.Errorf("failed to send message: %w", err)
+	}
+
+	c.log.Debug().
+		Int64("chat_id", chatID).
+		Int64("message_id", msg.ID).
+		Str("client_message_id", clientMessageID).
+		Interface("thread_id", threadID).
+		Msg("Message sent successfully")
+
+	return &msg, nil
+}
+
+// EditMessage edits an existing message.
+func (c *Client) EditMessage(ctx context.Context, chatID, messageID int64, content, clientMessageID string) (*Message, error) {
+	path := fmt.Sprintf("/messages/%d/chat_messages/update", chatID)
+
+	req := EditMessageRequest{
+		Content:         content,
+		MessageID:       messageID,
+		ClientMessageID: clientMessageID,
+		ClientID:        uuid.New().String(),
+		VersionNumber:   2,
+	}
+
+	var msg Message
+	if err := c.doJSONPostRequest(ctx, path, req, &msg); err != nil {
+		return nil, fmt.Errorf("failed to edit message: %w", err)
+	}
+
+	c.log.Debug().
+		Int64("chat_id", chatID).
+		Int64("message_id", messageID).
+		Msg("Message edited successfully")
+
+	return &msg, nil
+}
+
+// DeleteMessage deletes a message.
+func (c *Client) DeleteMessage(ctx context.Context, chatID, messageID int64) error {
+	path := fmt.Sprintf("/messages/%d/chat_messages/destroy", chatID)
+
+	req := DeleteMessageRequest{
+		MessageID:       messageID,
+		ClientMessageID: uuid.New().String(),
+	}
+
+	if err := c.doJSONPostRequest(ctx, path, req, nil); err != nil {
+		return fmt.Errorf("failed to delete message: %w", err)
+	}
+
+	c.log.Debug().
+		Int64("chat_id", chatID).
+		Int64("message_id", messageID).
+		Msg("Message deleted successfully")
+
+	return nil
+}
+
+// SendReaction adds a reaction to a message.
+func (c *Client) SendReaction(ctx context.Context, userID, messageID int64, emojiID string) (*SendReactionResponse, error) {
+	req := SendReactionRequest{
+		EmojiID:          emojiID,
+		EmojiVariant:     nil,
+		UserID:           userID,
+		ReactionableID:   messageID,
+		ReactionableType: "ChatMessage",
+		ClientID:         uuid.New().String(),
+	}
+
+	var resp SendReactionResponse
+	if err := c.doJSONPostRequest(ctx, "/reactions", req, &resp); err != nil {
+		return nil, fmt.Errorf("failed to send reaction: %w", err)
+	}
+
+	c.log.Debug().
+		Int64("message_id", messageID).
+		Str("emoji_id", emojiID).
+		Msg("Reaction sent successfully")
+
+	return &resp, nil
+}
+
+// RemoveReaction removes a reaction from a message.
+func (c *Client) RemoveReaction(ctx context.Context, userID, messageID int64, emojiID string) error {
+	req := SendReactionRequest{
+		EmojiID:          emojiID,
+		EmojiVariant:     nil,
+		UserID:           userID,
+		ReactionableID:   messageID,
+		ReactionableType: "ChatMessage",
+		ClientID:         uuid.New().String(),
+	}
+
+	if err := c.doJSONPostRequest(ctx, "/reactions/delete", req, nil); err != nil {
+		return fmt.Errorf("failed to remove reaction: %w", err)
+	}
+
+	c.log.Debug().
+		Int64("message_id", messageID).
+		Str("emoji_id", emojiID).
+		Msg("Reaction removed successfully")
+
+	return nil
 }
 
 // Logout invalidates the current session by calling the logout endpoint.

@@ -162,7 +162,15 @@ func (bc *BookfaceClient) convertToMatrix(ctx context.Context, portal *bridgev2.
 		parts = append(parts, mediaPart)
 	}
 
-	return &bridgev2.ConvertedMessage{Parts: parts}, nil
+	converted := &bridgev2.ConvertedMessage{Parts: parts}
+
+	// Handle thread replies
+	if msg.ThreadID != nil {
+		threadRoot := networkid.MessageID(fmt.Sprintf("%d", *msg.ThreadID))
+		converted.ThreadRoot = &threadRoot
+	}
+
+	return converted, nil
 }
 
 // convertReactionsToBackfill converts Bookface reactions to BackfillReaction slice.
