@@ -21,6 +21,11 @@ type BookfaceClient struct {
 	UserLogin   *bridgev2.UserLogin
 	Client      *bookface.Client
 	actionCable *bookface.ActionCable
+
+	// pendingMetadataUpdates stores metadata that needs to be applied after backfill completes.
+	// This is populated when we sync threads for messages that haven't been stored yet,
+	// and applied at the start of the next backfill cycle.
+	pendingMetadataUpdates map[int64]*MessageMetadata
 }
 
 var _ bridgev2.NetworkAPI = (*BookfaceClient)(nil)

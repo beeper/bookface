@@ -85,17 +85,18 @@ type Reaction struct {
 
 // Message represents a chat message.
 type Message struct {
-	ID           int64         `json:"id"`
-	ChatID       int64         `json:"chat_id"`
-	UserID       int64         `json:"user_id"`
-	Content      string        `json:"content"`
-	HTMLContent  string        `json:"html_content"`
-	CreatedAt    time.Time     `json:"created_at"`
-	UpdatedAt    time.Time     `json:"updated_at"`
-	User         *User         `json:"user,omitempty"`
-	MediaUploads []MediaUpload `json:"media_uploads,omitempty"`
-	Reactions    []Reaction    `json:"reactions,omitempty"`
-	ThreadID     *int64        `json:"thread_id,omitempty"`
+	ID               int64         `json:"id"`
+	ChatID           int64         `json:"chat_id"`
+	UserID           int64         `json:"user_id"`
+	Content          string        `json:"content"`
+	HTMLContent      string        `json:"html_content"`
+	CreatedAt        time.Time     `json:"created_at"`
+	UpdatedAt        time.Time     `json:"updated_at"`
+	User             *User         `json:"user,omitempty"`
+	MediaUploads     []MediaUpload `json:"media_uploads,omitempty"`
+	Reactions        []Reaction    `json:"reactions,omitempty"`
+	ThreadID         *int64        `json:"thread_id,omitempty"`
+	ThreadReplyCount int           `json:"thread_reply_count,omitempty"`
 }
 
 // Chat represents a conversation/chat room.

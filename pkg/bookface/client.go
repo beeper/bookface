@@ -282,6 +282,18 @@ func (c *Client) GetMessages(ctx context.Context, chatID int64, beforeID, afterI
 	return &resp, nil
 }
 
+// GetThreadMessages fetches all messages in a thread.
+func (c *Client) GetThreadMessages(ctx context.Context, chatID, threadID int64) (*MessagesResponse, error) {
+	path := fmt.Sprintf("/messages/%d/chat_messages?thread_id=%d", chatID, threadID)
+
+	var resp MessagesResponse
+	if err := c.doJSONRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+
+	return &resp, nil
+}
+
 // GetChatUsers fetches the full member list for a chat.
 func (c *Client) GetChatUsers(ctx context.Context, chatID int64) (*ChatUsersResponse, error) {
 	path := fmt.Sprintf("/messages/%d/chat_users", chatID)

@@ -78,11 +78,19 @@ func (bc *BookfaceClient) syncChat(ctx context.Context, chat *bookface.Chat) {
 		})
 	}
 
-	// Get latest message timestamp for backfill check
-	var latestMessageTS time.Time
-	if chat.InitialLastMessage != nil {
-		latestMessageTS = chat.InitialLastMessage.CreatedAt
-	}
+	// Always trigger forward backfill by using current time as LatestMessageTS.
+	// This is necessary because:
+	// 1. chat.updated_at only reflects chat metadata changes, not new messages
+	// 2. initial_last_message only shows one message, but threads could be on any message
+	// 3. We need to fetch recent messages to check each one's updated_at for thread activity
+	// The bridge framework will deduplicate messages we already have.
+	latestMessageTS := time.Now()
+
+	bc.UserLogin.Log.Info().
+		Int64("chat_id", chat.ID).
+		Str("name", chat.Name).
+		Time("latest_message_ts_for_backfill", latestMessageTS).
+		Msg("Chat sync - always triggering forward backfill to check for thread updates")
 
 	// Queue chat resync event - this will create the portal and trigger backfill
 	bc.UserLogin.QueueRemoteEvent(&simplevent.ChatResync{
@@ -97,8 +105,5 @@ func (bc *BookfaceClient) syncChat(ctx context.Context, chat *bookface.Chat) {
 
 	bc.UserLogin.Log.Debug().
 		Int64("chat_id", chat.ID).
-		Str("name", chat.Name).
-		Bool("has_initial_last_message", chat.InitialLastMessage != nil).
-		Time("latest_message_ts", latestMessageTS).
-		Msg("Queued chat sync")
+		Msg("Queued chat resync event")
 }

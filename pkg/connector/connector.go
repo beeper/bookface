@@ -42,6 +42,9 @@ func (bc *BookfaceConnector) GetDBMetaTypes() database.MetaTypes {
 		UserLogin: func() any {
 			return &UserLoginMetadata{}
 		},
+		Message: func() any {
+			return &MessageMetadata{}
+		},
 	}
 }
 
@@ -102,4 +105,10 @@ type UserLoginMetadata struct {
 	UserID    int64  `json:"user_id"`
 	UserName  string `json:"user_name"`
 	AvatarURL string `json:"avatar_url,omitempty"`
+}
+
+// MessageMetadata stores extra metadata for bridged messages.
+type MessageMetadata struct {
+	UpdatedAt        int64   `json:"updated_at"`                   // Unix timestamp of message's last update
+	ThreadMessageIDs []int64 `json:"thread_message_ids,omitempty"` // IDs of thread replies (only set on thread parent)
 }
