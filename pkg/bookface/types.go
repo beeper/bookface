@@ -65,6 +65,9 @@ type MediaUpload struct {
 	ContentType string `json:"content_type"`
 	URL         string `json:"url"`
 	ThumbURL    string `json:"thumb_url"`
+	OriginalURL string `json:"original_url"`
+	Width       int    `json:"width"`
+	Height      int    `json:"height"`
 }
 
 // ReactionUser represents the minimal user info in a reaction.
@@ -135,12 +138,6 @@ type ChatUsersResponse struct {
 // ApplicationShellResponse is the response from /messages/application_shell.json.
 type ApplicationShellResponse struct {
 	CurrentUser *User `json:"current_user"`
-}
-
-// Credentials holds the authentication data for a Bookface session.
-type Credentials struct {
-	Cookies   string `json:"cookies"`
-	CSRFToken string `json:"csrf_token"`
 }
 
 // SendMessageRequest is the request body for sending a message.

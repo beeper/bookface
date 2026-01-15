@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/cookiejar"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -20,9 +19,11 @@ import (
 
 const (
 	BaseURL         = "https://messages.ycombinator.com"
+	BookfaceURL     = "https://bookface.ycombinator.com"
 	AccountURL      = "https://account.ycombinator.com"
 	DefaultPerPage  = 50
 	RequestTimeout  = 30 * time.Second
+	UserAgent       = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 )
 
 var csrfMetaRegex = regexp.MustCompile(`<meta\s+name="csrf-token"\s+content="([^"]+)"`)
@@ -30,30 +31,39 @@ var csrfMetaRegex = regexp.MustCompile(`<meta\s+name="csrf-token"\s+content="([^
 // Client is an HTTP client for the Bookface API.
 type Client struct {
 	httpClient *http.Client
+	jar        *StringCookieJar
 	baseURL    string
-	cookies    string
 	csrfToken  string
 	log        zerolog.Logger
 	isLoggedIn atomic.Bool
 }
 
 // NewClient creates a new Bookface client with the given credentials.
-func NewClient(creds *Credentials, log zerolog.Logger) *Client {
+func NewClient(jar *StringCookieJar, csrfToken string, log zerolog.Logger) *Client {
+	if jar == nil {
+		jar = NewEmptyStringCookieJar()
+	}
+
 	return &Client{
 		httpClient: &http.Client{
 			Timeout: RequestTimeout,
+			Jar:     jar,
 		},
+		jar:       jar,
 		baseURL:   BaseURL,
-		cookies:   creds.Cookies,
-		csrfToken: creds.CSRFToken,
+		csrfToken: csrfToken,
 		log:       log.With().Str("component", "bookface_client").Logger(),
 	}
 }
 
-// SetCredentials updates the client's credentials.
-func (c *Client) SetCredentials(creds *Credentials) {
-	c.cookies = creds.Cookies
-	c.csrfToken = creds.CSRFToken
+// SetCSRFToken updates the client's CSRF token.
+func (c *Client) SetCSRFToken(token string) {
+	c.csrfToken = token
+}
+
+// GetCookieJar returns the underlying cookie jar.
+func (c *Client) GetCookieJar() *StringCookieJar {
+	return c.jar
 }
 
 // IsLoggedIn returns whether the client is currently logged in.
@@ -67,6 +77,7 @@ func (c *Client) SetLoggedIn(loggedIn bool) {
 }
 
 // doRequest performs an HTTP request with the appropriate headers.
+// Cookies are automatically handled by the http.Client's cookie jar.
 func (c *Client) doRequest(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
 	reqURL := c.baseURL + path
 	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
@@ -74,14 +85,14 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body io.Rea
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Cookie", c.cookies)
+	// Cookies are handled automatically by the jar on httpClient
 	req.Header.Set("X-CSRF-Token", c.csrfToken)
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Referer", c.baseURL+"/messages")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
 
-	c.log.Debug().Str("method", method).Str("url", reqURL).Int("cookie_length", len(c.cookies)).Msg("Making request")
+	c.log.Debug().Str("method", method).Str("url", reqURL).Msg("Making request")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -118,6 +129,7 @@ func (c *Client) doJSONRequest(ctx context.Context, method, path string, body io
 }
 
 // doJSONPostRequest performs a JSON POST request and decodes the response.
+// Cookies are automatically handled by the http.Client's cookie jar.
 func (c *Client) doJSONPostRequest(ctx context.Context, path string, payload interface{}, result interface{}) error {
 	bodyBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -130,11 +142,12 @@ func (c *Client) doJSONPostRequest(ctx context.Context, path string, payload int
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Cookie", c.cookies)
+	// Cookies are handled automatically by the jar on httpClient
 	req.Header.Set("X-CSRF-Token", c.csrfToken)
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", c.baseURL)
 	req.Header.Set("Referer", c.baseURL+"/messages")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
 
@@ -165,6 +178,7 @@ func (c *Client) doJSONPostRequest(ctx context.Context, path string, payload int
 }
 
 // FetchCSRFToken fetches the CSRF token from the HTML page.
+// Session cookies are automatically captured by the cookie jar.
 func (c *Client) FetchCSRFToken(ctx context.Context) (string, error) {
 	// We need to request HTML explicitly, not JSON
 	reqURL := c.baseURL + "/messages"
@@ -173,7 +187,7 @@ func (c *Client) FetchCSRFToken(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Cookie", c.cookies)
+	// Cookies are handled automatically by the jar on httpClient
 	req.Header.Set("Accept", "text/html")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
 
@@ -182,6 +196,8 @@ func (c *Client) FetchCSRFToken(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
+
+	// Set-Cookie headers are automatically handled by the cookie jar
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -478,25 +494,8 @@ func (c *Client) RemoveReaction(ctx context.Context, userID, messageID int64, em
 // Logout invalidates the current session by calling the logout endpoint.
 // The flow is: bookface/session/logout -> account.ycombinator.com/sign_out
 func (c *Client) Logout(ctx context.Context) error {
-	// Create a client that follows redirects and tracks cookies
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		return fmt.Errorf("failed to create cookie jar: %w", err)
-	}
-
-	// Pre-populate the jar with our current cookies
-	baseURL, _ := url.Parse(c.baseURL)
-	jar.SetCookies(baseURL, []*http.Cookie{{
-		Name:  "_sso.key",
-		Value: strings.TrimPrefix(c.cookies, "_sso.key="),
-	}})
-
-	logoutClient := &http.Client{
-		Timeout: RequestTimeout,
-		Jar:     jar,
-	}
-
-	// Call the bookface logout endpoint - it will redirect to account.ycombinator.com/sign_out
+	// Use the existing cookie jar - it already has all our session cookies
+	// The httpClient will follow redirects automatically
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/session/logout", nil)
 	if err != nil {
 		return fmt.Errorf("failed to create logout request: %w", err)
@@ -506,7 +505,7 @@ func (c *Client) Logout(ctx context.Context) error {
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
 
 	c.log.Debug().Msg("Calling logout endpoint")
-	resp, err := logoutClient.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("logout request failed: %w", err)
 	}
@@ -535,15 +534,12 @@ type LoginResponse struct {
 	Error   string `json:"error,omitempty"`
 }
 
-// Login authenticates with YC SSO and returns credentials with the _sso.key cookie.
-func Login(ctx context.Context, ycid, password string, log zerolog.Logger) (*Credentials, error) {
+// Login authenticates with YC SSO and returns a cookie jar with the _sso.key cookie.
+func Login(ctx context.Context, ycid, password string, log zerolog.Logger) (*StringCookieJar, error) {
 	log = log.With().Str("component", "yc_login").Logger()
 
-	// Create a client with cookie jar to capture cookies
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create cookie jar: %w", err)
-	}
+	// Create a StringCookieJar to capture cookies (uses publicsuffix for domain matching)
+	jar := NewEmptyStringCookieJar()
 	httpClient := &http.Client{
 		Timeout: RequestTimeout,
 		Jar:     jar,
@@ -627,50 +623,20 @@ func Login(ctx context.Context, ycid, password string, log zerolog.Logger) (*Cre
 		return nil, fmt.Errorf("login failed with status %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	// Step 3: Extract _sso.key cookie from the cookie jar
-	// The cookie is set on .ycombinator.com domain
-	ycURL, _ := url.Parse("https://ycombinator.com")
-	var ssoKey string
-	for _, cookie := range jar.Cookies(ycURL) {
-		if cookie.Name == "_sso.key" {
-			ssoKey = cookie.Value
-			break
-		}
-	}
-
+	// Step 3: Verify _sso.key cookie is in the jar
+	// The cookie is set on .ycombinator.com domain and the jar handles domain matching
+	ssoKey := jar.GetCookie("_sso.key")
 	if ssoKey == "" {
-		// Also check account.ycombinator.com
-		accountURL, _ := url.Parse(AccountURL)
-		for _, cookie := range jar.Cookies(accountURL) {
-			if cookie.Name == "_sso.key" {
-				ssoKey = cookie.Value
-				break
-			}
+		// Log available cookies for debugging
+		var cookieNames []string
+		for _, c := range jar.Cookies(CookieBaseURL) {
+			cookieNames = append(cookieNames, c.Name)
 		}
-	}
-
-	if ssoKey == "" {
-		log.Error().Msg("_sso.key cookie not found in response")
+		log.Error().Strs("available_cookies", cookieNames).Msg("_sso.key cookie not found in response")
 		return nil, fmt.Errorf("login succeeded but _sso.key cookie not found")
 	}
 
 	log.Info().Msg("Successfully logged in to YC SSO")
-	return &Credentials{
-		Cookies: fmt.Sprintf("_sso.key=%s", ssoKey),
-	}, nil
+	return jar, nil
 }
 
-// ParseCookies parses a cookie header string and extracts individual cookies.
-func ParseCookies(cookieHeader string) map[string]string {
-	cookies := make(map[string]string)
-	parts := strings.Split(cookieHeader, ";")
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if idx := strings.Index(part, "="); idx > 0 {
-			key := strings.TrimSpace(part[:idx])
-			value := strings.TrimSpace(part[idx+1:])
-			cookies[key] = value
-		}
-	}
-	return cookies
-}

@@ -2,6 +2,8 @@ package connector
 
 import (
 	"context"
+	"net/http"
+	"sync"
 
 	"go.mau.fi/util/configupgrade"
 	"maunium.net/go/mautrix/bridgev2"
@@ -14,6 +16,25 @@ import (
 type BookfaceConnector struct {
 	Bridge      *bridgev2.Bridge
 	DirectMedia bool
+
+	// cookieJar is shared with user clients for authenticated media fetches.
+	// When a user logs in, their client's cookie jar is stored here.
+	cookieJar   http.CookieJar
+	cookieJarMu sync.RWMutex
+}
+
+// SetCookieJar sets the cookie jar used for authenticated requests.
+func (bc *BookfaceConnector) SetCookieJar(jar http.CookieJar) {
+	bc.cookieJarMu.Lock()
+	bc.cookieJar = jar
+	bc.cookieJarMu.Unlock()
+}
+
+// GetCookieJar returns the cookie jar for authenticated requests.
+func (bc *BookfaceConnector) GetCookieJar() http.CookieJar {
+	bc.cookieJarMu.RLock()
+	defer bc.cookieJarMu.RUnlock()
+	return bc.cookieJar
 }
 
 var _ bridgev2.NetworkConnector = (*BookfaceConnector)(nil)
@@ -83,16 +104,29 @@ func (bc *BookfaceConnector) CreateLogin(ctx context.Context, user *bridgev2.Use
 
 func (bc *BookfaceConnector) LoadUserLogin(ctx context.Context, login *bridgev2.UserLogin) error {
 	metadata := login.Metadata.(*UserLoginMetadata)
-	if metadata.Cookies == "" {
+	if metadata.Cookies == nil {
 		return nil
 	}
 
+	// Set up callback to persist cookies to database whenever they're updated
+	metadata.Cookies.SetOnUpdate(func() {
+		err := login.Save(context.Background())
+		if err != nil {
+			login.Log.Err(err).Msg("Failed to save cookies after update")
+		} else {
+			login.Log.Debug().Msg("Saved cookies after update")
+		}
+	})
+
+	bookfaceClient := bookface.NewClient(metadata.Cookies, metadata.CSRFToken, login.Log)
+
+	// Share the client's cookie jar with the connector for authenticated media fetches
+	bc.SetCookieJar(bookfaceClient.GetCookieJar())
+
 	client := &BookfaceClient{
+		Connector: bc,
 		UserLogin: login,
-		Client: bookface.NewClient(&bookface.Credentials{
-			Cookies:   metadata.Cookies,
-			CSRFToken: metadata.CSRFToken,
-		}, login.Log),
+		Client:    bookfaceClient,
 	}
 	login.Client = client
 	return nil
@@ -100,11 +134,11 @@ func (bc *BookfaceConnector) LoadUserLogin(ctx context.Context, login *bridgev2.
 
 // UserLoginMetadata stores the credentials for a logged-in user.
 type UserLoginMetadata struct {
-	Cookies   string `json:"cookies"`
-	CSRFToken string `json:"csrf_token"`
-	UserID    int64  `json:"user_id"`
-	UserName  string `json:"user_name"`
-	AvatarURL string `json:"avatar_url,omitempty"`
+	Cookies   *bookface.StringCookieJar `json:"cookies,omitempty"`
+	CSRFToken string                    `json:"csrf_token"`
+	UserID    int64                     `json:"user_id"`
+	UserName  string                    `json:"user_name"`
+	AvatarURL string                    `json:"avatar_url,omitempty"`
 }
 
 // MessageMetadata stores extra metadata for bridged messages.

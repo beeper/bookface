@@ -93,9 +93,9 @@ type ActionCableHandler func(event *ActionCableEvent)
 
 // ActionCable manages the WebSocket connection to the Bookface ActionCable server.
 type ActionCable struct {
-	cookies string
-	userID  int64
-	log     zerolog.Logger
+	jar    *StringCookieJar
+	userID int64
+	log    zerolog.Logger
 
 	conn  *websocket.Conn
 	state atomic.Int32
@@ -115,9 +115,9 @@ type ActionCable struct {
 }
 
 // NewActionCable creates a new ActionCable connection manager.
-func NewActionCable(cookies string, userID int64, handler ActionCableHandler, log zerolog.Logger) *ActionCable {
+func NewActionCable(jar *StringCookieJar, userID int64, handler ActionCableHandler, log zerolog.Logger) *ActionCable {
 	return &ActionCable{
-		cookies:        cookies,
+		jar:            jar,
 		userID:         userID,
 		handler:        handler,
 		log:            log.With().Str("component", "actioncable").Logger(),
@@ -186,7 +186,7 @@ func (ac *ActionCable) connect() error {
 	ac.log.Debug().Msg("Connecting to ActionCable")
 
 	header := http.Header{}
-	header.Set("Cookie", ac.cookies)
+	header.Set("Cookie", ac.jar.CookieHeader())
 	header.Set("Origin", "https://messages.ycombinator.com")
 	header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
 

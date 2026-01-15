@@ -3,6 +3,8 @@ package connector
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"sort"
 	"strconv"
 
@@ -489,36 +491,50 @@ func shortcodeToEmoji(shortcode string) string {
 // convertToMatrix converts a Bookface message to a bridgev2 ConvertedMessage.
 // This is the shared conversion function used by both backfill and real-time events.
 func (bc *BookfaceClient) convertToMatrix(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, msg *bookface.Message) (*bridgev2.ConvertedMessage, error) {
-	// Build text content
-	content := &event.MessageEventContent{
-		MsgType: event.MsgText,
-		Body:    msg.Content,
-	}
-	if msg.HTMLContent != "" {
-		content.Format = event.FormatHTML
-		content.FormattedBody = msg.HTMLContent
+	var parts []*bridgev2.ConvertedMessagePart
+
+	// Add text content first if present
+	if msg.Content != "" {
+		content := &event.MessageEventContent{
+			MsgType: event.MsgText,
+			Body:    msg.Content,
+		}
+		if msg.HTMLContent != "" {
+			content.Format = event.FormatHTML
+			content.FormattedBody = msg.HTMLContent
+		}
+		parts = append(parts, &bridgev2.ConvertedMessagePart{
+			ID:      networkid.PartID(""),
+			Type:    event.EventMessage,
+			Content: content,
+		})
 	}
 
-	parts := []*bridgev2.ConvertedMessagePart{{
-		ID:      networkid.PartID(""),
-		Type:    event.EventMessage,
-		Content: content,
-	}}
+	// Add each media upload as a separate part
+	for i, media := range msg.MediaUploads {
+		mediaContent, err := bc.convertMediaToContent(ctx, &media)
+		if err != nil {
+			bc.UserLogin.Log.Warn().Err(err).Int64("media_id", media.ID).Msg("Failed to convert media")
+			continue
+		}
+		partID := networkid.PartID(fmt.Sprintf("media_%d", i))
+		parts = append(parts, &bridgev2.ConvertedMessagePart{
+			ID:      partID,
+			Type:    event.EventMessage,
+			Content: mediaContent,
+		})
+	}
 
-	// Handle media uploads
-	for _, media := range msg.MediaUploads {
-		mediaPart := &bridgev2.ConvertedMessagePart{
-			ID:   networkid.PartID(fmt.Sprintf("media_%d", media.ID)),
+	// If no parts were created (empty message), create an empty text part
+	if len(parts) == 0 {
+		parts = append(parts, &bridgev2.ConvertedMessagePart{
+			ID:   networkid.PartID(""),
 			Type: event.EventMessage,
 			Content: &event.MessageEventContent{
-				MsgType: event.MsgFile,
-				Body:    media.Filename,
+				MsgType: event.MsgText,
+				Body:    "",
 			},
-			Extra: map[string]any{
-				"bookface_media_url": media.URL,
-			},
-		}
-		parts = append(parts, mediaPart)
+		})
 	}
 
 	converted := &bridgev2.ConvertedMessage{Parts: parts}
@@ -530,6 +546,93 @@ func (bc *BookfaceClient) convertToMatrix(ctx context.Context, portal *bridgev2.
 	}
 
 	return converted, nil
+}
+
+// convertMediaToContent converts a Bookface media upload to a Matrix message content.
+func (bc *BookfaceClient) convertMediaToContent(ctx context.Context, media *bookface.MediaUpload) (*event.MessageEventContent, error) {
+	connector := bc.UserLogin.Bridge.Network.(*BookfaceConnector)
+
+	// Determine message type based on content type or dimensions
+	msgType := event.MsgFile
+	mimeType := media.ContentType
+	if media.Width > 0 && media.Height > 0 {
+		msgType = event.MsgImage
+		if mimeType == "" {
+			mimeType = "image/jpeg"
+		}
+	}
+
+	// Generate filename if not provided
+	filename := media.Filename
+	if filename == "" {
+		if msgType == event.MsgImage {
+			filename = fmt.Sprintf("image_%d.jpg", media.ID)
+		} else {
+			filename = fmt.Sprintf("file_%d", media.ID)
+		}
+	}
+
+	content := &event.MessageEventContent{
+		MsgType: msgType,
+		Body:    filename,
+		Info: &event.FileInfo{
+			Width:    media.Width,
+			Height:   media.Height,
+			MimeType: mimeType,
+		},
+	}
+
+	// Use the URL with variant=large for images, or original_url for files
+	mediaURL := media.URL
+	if mediaURL == "" {
+		mediaURL = media.OriginalURL
+	}
+
+	if connector.DirectMedia {
+		// Generate direct media URI
+		mediaID := MakeAttachmentMediaID(mediaURL)
+		mxc, err := bc.UserLogin.Bridge.Matrix.GenerateContentURI(ctx, mediaID)
+		if err != nil {
+			bc.UserLogin.Log.Warn().Err(err).Str("url", mediaURL).Msg("Failed to generate direct media URI, falling back to upload")
+		} else {
+			content.URL = mxc
+			return content, nil
+		}
+	}
+
+	// Fallback: download and upload the media
+	data, err := bc.downloadMedia(ctx, mediaURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download media: %w", err)
+	}
+
+	content.URL, content.File, err = bc.UserLogin.Bridge.Bot.UploadMedia(ctx, "", data, filename, mimeType)
+	if err != nil {
+		return nil, fmt.Errorf("failed to upload media: %w", err)
+	}
+
+	return content, nil
+}
+
+// downloadMedia fetches media from a URL.
+func (bc *BookfaceClient) downloadMedia(ctx context.Context, mediaURL string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, mediaURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to download media: status %d", resp.StatusCode)
+	}
+
+	return io.ReadAll(resp.Body)
 }
 
 // convertReactionsToBackfill converts Bookface reactions to BackfillReaction slice.

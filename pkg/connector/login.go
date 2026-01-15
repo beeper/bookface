@@ -56,22 +56,21 @@ func (pl *PasswordLogin) SubmitUserInput(ctx context.Context, input map[string]s
 
 	pl.Bridge.Log.Debug().Str("ycid", ycid).Msg("Attempting YC SSO login")
 
-	// Authenticate with YC SSO
-	creds, err := bookface.Login(ctx, ycid, password, pl.Bridge.Log)
+	// Authenticate with YC SSO - returns a cookie jar with _sso.key
+	jar, err := bookface.Login(ctx, ycid, password, pl.Bridge.Log)
 	if err != nil {
 		return nil, fmt.Errorf("login failed: %w", err)
 	}
 
-	// Create a client with the credentials
-	client := bookface.NewClient(creds, pl.Bridge.Log)
+	// Create a client with the cookie jar (no CSRF token yet)
+	client := bookface.NewClient(jar, "", pl.Bridge.Log)
 
-	// Fetch the CSRF token from the messages page
+	// Fetch the CSRF token from the messages page (also captures session cookies)
 	csrfToken, err := client.FetchCSRFToken(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch CSRF token: %w", err)
 	}
-	creds.CSRFToken = csrfToken
-	client.SetCredentials(creds)
+	client.SetCSRFToken(csrfToken)
 
 	// Validate by fetching user info
 	user, err := client.ValidateAuth(ctx)
@@ -101,7 +100,7 @@ func (pl *PasswordLogin) SubmitUserInput(ctx context.Context, input map[string]s
 			Username: user.HNID,
 		},
 		Metadata: &UserLoginMetadata{
-			Cookies:   creds.Cookies,
+			Cookies:   jar,
 			CSRFToken: csrfToken,
 			UserID:    user.ID,
 			UserName:  displayName,
@@ -109,10 +108,15 @@ func (pl *PasswordLogin) SubmitUserInput(ctx context.Context, input map[string]s
 		},
 	}
 
+	// Share the client's cookie jar with the connector for authenticated media fetches
+	connector := pl.Bridge.Network.(*BookfaceConnector)
+	connector.SetCookieJar(client.GetCookieJar())
+
 	// Create the user login
 	ul, err := pl.User.NewLogin(ctx, dbUserLogin, &bridgev2.NewLoginParams{
 		LoadUserLogin: func(ctx context.Context, login *bridgev2.UserLogin) error {
 			login.Client = &BookfaceClient{
+				Connector: connector,
 				UserLogin: login,
 				Client:    client,
 			}
@@ -123,6 +127,16 @@ func (pl *PasswordLogin) SubmitUserInput(ctx context.Context, input map[string]s
 	if err != nil {
 		return nil, fmt.Errorf("failed to create login: %w", err)
 	}
+
+	// Set up callback to persist cookies to database whenever they're updated.
+	// This is done after NewLogin so ul is guaranteed to be assigned.
+	jar.SetOnUpdate(func() {
+		if err := ul.Save(context.Background()); err != nil {
+			ul.Log.Err(err).Msg("Failed to save cookies after update")
+		} else {
+			ul.Log.Debug().Msg("Saved cookies after update")
+		}
+	})
 
 	// Connect to start syncing chats
 	ul.Client.Connect(ul.Log.WithContext(context.Background()))

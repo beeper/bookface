@@ -18,6 +18,7 @@ import (
 
 // BookfaceClient implements the mautrix NetworkAPI interface.
 type BookfaceClient struct {
+	Connector   *BookfaceConnector
 	UserLogin   *bridgev2.UserLogin
 	Client      *bookface.Client
 	actionCable *bookface.ActionCable
@@ -61,6 +62,9 @@ func (bc *BookfaceClient) Connect(ctx context.Context) {
 		}
 		ownGhost.UpdateInfo(ctx, ghostInfo)
 	}
+
+	// Ensure the connector has our cookie jar for authenticated media fetches
+	bc.Connector.SetCookieJar(bc.Client.GetCookieJar())
 
 	// Update and save RemoteProfile
 	bc.UserLogin.RemoteName = user.HNID
@@ -221,8 +225,7 @@ func (bc *BookfaceClient) makeAvatar(ctx context.Context, avatarURL string) *bri
 		return &bridgev2.Avatar{Remove: true}
 	}
 
-	connector := bc.UserLogin.Bridge.Network.(*BookfaceConnector)
-	if connector.DirectMedia {
+	if bc.Connector.DirectMedia {
 		mediaID := MakeAvatarMediaID(avatarURL)
 		mxc, err := bc.UserLogin.Bridge.Matrix.GenerateContentURI(ctx, mediaID)
 		if err != nil {

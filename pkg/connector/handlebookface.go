@@ -138,7 +138,7 @@ func (bc *BookfaceClient) handleMessageDeleted(chatID int64, msg *bookface.Messa
 func (bc *BookfaceClient) buildReactionSyncData(reactions []bookface.Reaction) *bridgev2.ReactionSyncData {
 	data := &bridgev2.ReactionSyncData{
 		Users:       make(map[networkid.UserID]*bridgev2.ReactionSyncUser),
-		HasAllUsers: true, // Bookface sends all reactions on each update
+		HasAllUsers: false, // Set to false to prevent overwriting existing reactions with MXIDs
 	}
 
 	for _, r := range reactions {
@@ -150,7 +150,7 @@ func (bc *BookfaceClient) buildReactionSyncData(reactions []bookface.Reaction) *
 		user, ok := data.Users[userID]
 		if !ok {
 			user = &bridgev2.ReactionSyncUser{
-				HasAllReactions: true, // We have all reactions from this user for this message
+				HasAllReactions: false, // Set to false to prevent removing existing reactions
 			}
 			data.Users[userID] = user
 		}
