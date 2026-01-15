@@ -186,11 +186,11 @@ func (ac *ActionCable) connect() error {
 	ac.log.Debug().Msg("Connecting to ActionCable")
 
 	header := http.Header{}
-	header.Set("Cookie", ac.jar.CookieHeader())
 	header.Set("Origin", "https://messages.ycombinator.com")
-	header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+	header.Set("User-Agent", UserAgent)
 
 	conn, _, err := websocket.Dial(ac.ctx, ActionCableURL, &websocket.DialOptions{
+		HTTPClient:   &http.Client{Jar: ac.jar},
 		HTTPHeader:   header,
 		Subprotocols: []string{"actioncable-v1-json", "actioncable-unsupported"},
 	})

@@ -17,7 +17,7 @@ var (
 func main() {
 	m := mxmain.BridgeMain{
 		Name:        "beeper-bookface",
-		URL:         "https://github.com/mautrix/bookface",
+		URL:         "https://github.com/beeper/bookface",
 		Description: "A Matrix-Bookface puppeting bridge",
 		Version:     "0.1.0",
 		Connector:   &connector.BookfaceConnector{},

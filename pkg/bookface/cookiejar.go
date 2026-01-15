@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
-	"strings"
 
 	"golang.org/x/net/publicsuffix"
 )
@@ -56,42 +55,33 @@ func (s *StringCookieJar) SetOnUpdate(callback func()) {
 	s.onUpdate = callback
 }
 
-// NewJarFromCookieHeader creates a StringCookieJar from a cookie header string.
-func NewJarFromCookieHeader(cookieHeader string) (*StringCookieJar, error) {
-	jar := NewEmptyStringCookieJar()
-	return jar, jar.parseCookieHeaderString(cookieHeader)
+// cookieJSON is used for JSON serialization (Name/Value only, domain is hardcoded).
+type cookieJSON struct {
+	Name  string `json:"Name"`
+	Value string `json:"Value"`
 }
 
 func (s *StringCookieJar) UnmarshalJSON(data []byte) error {
 	*s = *NewEmptyStringCookieJar()
-	if len(data) > 0 && data[0] == '"' {
-		// Legacy format: plain string
-		var cookieHeader string
-		if err := json.Unmarshal(data, &cookieHeader); err != nil {
-			return err
-		}
-		return s.parseCookieHeaderString(cookieHeader)
-	}
-	// New format: array of cookies
-	var cookies []*http.Cookie
-	if err := json.Unmarshal(data, &cookies); err != nil {
+	var parsed []cookieJSON
+	if err := json.Unmarshal(data, &parsed); err != nil {
 		return err
 	}
-	// Use jar directly to avoid triggering onUpdate when loading from database
+	cookies := make([]*http.Cookie, len(parsed))
+	for i, c := range parsed {
+		cookies[i] = &http.Cookie{Name: c.Name, Value: c.Value, Domain: CookieDomain}
+	}
 	s.jar.SetCookies(CookieBaseURL, cookies)
 	return nil
 }
 
 func (s *StringCookieJar) MarshalJSON() ([]byte, error) {
 	cookies := s.Cookies(CookieBaseURL)
-	// Ensure all cookies have domain set for cross-subdomain access
-	// (jar.Cookies() doesn't populate Domain field, but we need it for proper restoration)
-	for _, c := range cookies {
-		if c.Domain == "" {
-			c.Domain = CookieDomain
-		}
+	out := make([]cookieJSON, len(cookies))
+	for i, c := range cookies {
+		out[i] = cookieJSON{Name: c.Name, Value: c.Value}
 	}
-	return json.Marshal(cookies)
+	return json.Marshal(out)
 }
 
 // GetCookie returns the value of a cookie by name.
@@ -102,36 +92,4 @@ func (s *StringCookieJar) GetCookie(name string) string {
 		}
 	}
 	return ""
-}
-
-// Clear removes all cookies from the jar while preserving the onUpdate callback.
-func (s *StringCookieJar) Clear() {
-	s.jar, _ = cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
-}
-
-// CookieHeader returns the cookies as a header string for HTTP requests.
-func (s *StringCookieJar) CookieHeader() string {
-	cookies := s.Cookies(CookieBaseURL)
-	if len(cookies) == 0 {
-		return ""
-	}
-	var parts []string
-	for _, c := range cookies {
-		parts = append(parts, c.Name+"="+c.Value)
-	}
-	return strings.Join(parts, "; ")
-}
-
-// parseCookieHeaderString parses a cookie header and adds cookies to the jar.
-// This uses jar directly to avoid triggering onUpdate (used during deserialization).
-func (s *StringCookieJar) parseCookieHeaderString(cookieString string) error {
-	if cookieString == "" {
-		return nil
-	}
-	cookies, err := http.ParseCookie(cookieString)
-	if err != nil {
-		return err
-	}
-	s.jar.SetCookies(CookieBaseURL, cookies)
-	return nil
 }

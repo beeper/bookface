@@ -76,82 +76,49 @@ func (c *Client) SetLoggedIn(loggedIn bool) {
 	c.isLoggedIn.Store(loggedIn)
 }
 
-// doRequest performs an HTTP request with the appropriate headers.
-// Cookies are automatically handled by the http.Client's cookie jar.
-func (c *Client) doRequest(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
-	reqURL := c.baseURL + path
-	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
+// setCommonHeaders sets headers common to all requests.
+func setCommonHeaders(req *http.Request) {
+	req.Header.Set("User-Agent", UserAgent)
+}
 
-	// Cookies are handled automatically by the jar on httpClient
+// setAPIHeaders sets headers for API requests (JSON endpoints).
+func (c *Client) setAPIHeaders(req *http.Request) {
+	setCommonHeaders(req)
 	req.Header.Set("X-CSRF-Token", c.csrfToken)
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Referer", c.baseURL+"/messages")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
-
-	c.log.Debug().Str("method", method).Str("url", reqURL).Msg("Making request")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-
-	return resp, nil
 }
 
-// doJSONRequest performs a request and decodes the JSON response.
-func (c *Client) doJSONRequest(ctx context.Context, method, path string, body io.Reader, result interface{}) error {
-	resp, err := c.doRequest(ctx, method, path, body)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return fmt.Errorf("authentication failed (status %d): please re-provision", resp.StatusCode)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	if result != nil {
-		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
-			return fmt.Errorf("failed to decode response: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// doJSONPostRequest performs a JSON POST request and decodes the response.
-// Cookies are automatically handled by the http.Client's cookie jar.
-func (c *Client) doJSONPostRequest(ctx context.Context, path string, payload interface{}, result interface{}) error {
-	bodyBytes, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("failed to marshal request body: %w", err)
-	}
-
+// doAPIRequest performs an API request and optionally decodes the JSON response.
+// If payload is non-nil, it will be marshaled to JSON and sent as the request body.
+// If result is non-nil, the response will be decoded into it.
+func (c *Client) doAPIRequest(ctx context.Context, method, path string, payload, result any) error {
 	reqURL := c.baseURL + path
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, strings.NewReader(string(bodyBytes)))
+
+	var body io.Reader
+	var bodyLen int
+	if payload != nil {
+		bodyBytes, err := json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("failed to marshal request body: %w", err)
+		}
+		body = strings.NewReader(string(bodyBytes))
+		bodyLen = len(bodyBytes)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Cookies are handled automatically by the jar on httpClient
-	req.Header.Set("X-CSRF-Token", c.csrfToken)
-	req.Header.Set("X-Requested-With", "XMLHttpRequest")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", c.baseURL)
-	req.Header.Set("Referer", c.baseURL+"/messages")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+	c.setAPIHeaders(req)
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", c.baseURL)
+	}
 
-	c.log.Debug().Str("method", "POST").Str("url", reqURL).Int("body_length", len(bodyBytes)).Msg("Making JSON POST request")
+	c.log.Debug().Str("method", method).Str("url", reqURL).Int("body_length", bodyLen).Msg("Making API request")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -187,9 +154,8 @@ func (c *Client) FetchCSRFToken(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Cookies are handled automatically by the jar on httpClient
+	setCommonHeaders(req)
 	req.Header.Set("Accept", "text/html")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -223,7 +189,7 @@ func (c *Client) FetchCSRFToken(ctx context.Context) (string, error) {
 // ValidateAuth validates the current credentials by fetching application shell.
 func (c *Client) ValidateAuth(ctx context.Context) (*User, error) {
 	var resp ApplicationShellResponse
-	if err := c.doJSONRequest(ctx, http.MethodGet, "/messages/application_shell.json", nil, &resp); err != nil {
+	if err := c.doAPIRequest(ctx, http.MethodGet, "/messages/application_shell.json", nil, &resp); err != nil {
 		return nil, err
 	}
 
@@ -246,7 +212,7 @@ func (c *Client) GetChats(ctx context.Context, cursor *string, perPage int) (*Ch
 	}
 
 	var resp ChatsResponse
-	if err := c.doJSONRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
+	if err := c.doAPIRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
 		return nil, err
 	}
 
@@ -291,7 +257,7 @@ func (c *Client) GetMessages(ctx context.Context, chatID int64, beforeID, afterI
 	}
 
 	var resp MessagesResponse
-	if err := c.doJSONRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
+	if err := c.doAPIRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
 		return nil, err
 	}
 
@@ -303,7 +269,7 @@ func (c *Client) GetThreadMessages(ctx context.Context, chatID, threadID int64) 
 	path := fmt.Sprintf("/messages/%d/chat_messages?thread_id=%d", chatID, threadID)
 
 	var resp MessagesResponse
-	if err := c.doJSONRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
+	if err := c.doAPIRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
 		return nil, err
 	}
 
@@ -315,45 +281,11 @@ func (c *Client) GetChatUsers(ctx context.Context, chatID int64) (*ChatUsersResp
 	path := fmt.Sprintf("/messages/%d/chat_users", chatID)
 
 	var resp ChatUsersResponse
-	if err := c.doJSONRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
+	if err := c.doAPIRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
 		return nil, err
 	}
 
 	return &resp, nil
-}
-
-// GetAllMessages fetches all messages for a chat by paginating backwards.
-func (c *Client) GetAllMessages(ctx context.Context, chatID int64) ([]Message, error) {
-	var allMessages []Message
-	var beforeID *int64
-
-	for {
-		resp, err := c.GetMessages(ctx, chatID, beforeID, nil)
-		if err != nil {
-			return nil, err
-		}
-
-		allMessages = append(allMessages, resp.Messages...)
-		c.log.Debug().Int64("chat_id", chatID).Int("fetched", len(resp.Messages)).Int("total", len(allMessages)).Bool("has_more", resp.HasMoreBefore).Msg("Fetched messages page")
-
-		if !resp.HasMoreBefore || len(resp.Messages) == 0 {
-			break
-		}
-
-		// Find the oldest message ID for the next request
-		oldestID := resp.Messages[0].ID
-		for _, msg := range resp.Messages {
-			if msg.ID < oldestID {
-				oldestID = msg.ID
-			}
-		}
-		beforeID = &oldestID
-
-		// Small delay to avoid rate limiting
-		time.Sleep(100 * time.Millisecond)
-	}
-
-	return allMessages, nil
 }
 
 // SendMessage sends a message to a chat.
@@ -384,7 +316,7 @@ func (c *Client) SendMessageWithThread(ctx context.Context, chatID int64, conten
 	}
 
 	var msg Message
-	if err := c.doJSONPostRequest(ctx, path, req, &msg); err != nil {
+	if err := c.doAPIRequest(ctx, http.MethodPost, path, req, &msg); err != nil {
 		return nil, fmt.Errorf("failed to send message: %w", err)
 	}
 
@@ -411,7 +343,7 @@ func (c *Client) EditMessage(ctx context.Context, chatID, messageID int64, conte
 	}
 
 	var msg Message
-	if err := c.doJSONPostRequest(ctx, path, req, &msg); err != nil {
+	if err := c.doAPIRequest(ctx, http.MethodPost, path, req, &msg); err != nil {
 		return nil, fmt.Errorf("failed to edit message: %w", err)
 	}
 
@@ -432,7 +364,7 @@ func (c *Client) DeleteMessage(ctx context.Context, chatID, messageID int64) err
 		ClientMessageID: uuid.New().String(),
 	}
 
-	if err := c.doJSONPostRequest(ctx, path, req, nil); err != nil {
+	if err := c.doAPIRequest(ctx, http.MethodPost, path, req, nil); err != nil {
 		return fmt.Errorf("failed to delete message: %w", err)
 	}
 
@@ -456,7 +388,7 @@ func (c *Client) SendReaction(ctx context.Context, userID, messageID int64, emoj
 	}
 
 	var resp SendReactionResponse
-	if err := c.doJSONPostRequest(ctx, "/reactions", req, &resp); err != nil {
+	if err := c.doAPIRequest(ctx, http.MethodPost, "/reactions", req, &resp); err != nil {
 		return nil, fmt.Errorf("failed to send reaction: %w", err)
 	}
 
@@ -479,7 +411,7 @@ func (c *Client) RemoveReaction(ctx context.Context, userID, messageID int64, em
 		ClientID:         uuid.New().String(),
 	}
 
-	if err := c.doJSONPostRequest(ctx, "/reactions/delete", req, nil); err != nil {
+	if err := c.doAPIRequest(ctx, http.MethodPost, "/reactions/delete", req, nil); err != nil {
 		return fmt.Errorf("failed to remove reaction: %w", err)
 	}
 
@@ -501,8 +433,8 @@ func (c *Client) Logout(ctx context.Context) error {
 		return fmt.Errorf("failed to create logout request: %w", err)
 	}
 
+	setCommonHeaders(req)
 	req.Header.Set("Accept", "text/html")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
 
 	c.log.Debug().Msg("Calling logout endpoint")
 	resp, err := c.httpClient.Do(req)
@@ -551,8 +483,8 @@ func Login(ctx context.Context, ycid, password string, log zerolog.Logger) (*Str
 	if err != nil {
 		return nil, fmt.Errorf("failed to create login page request: %w", err)
 	}
+	setCommonHeaders(req)
 	req.Header.Set("Accept", "text/html")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -596,10 +528,10 @@ func Login(ctx context.Context, ycid, password string, log zerolog.Logger) (*Str
 	if err != nil {
 		return nil, fmt.Errorf("failed to create sign_in request: %w", err)
 	}
+	setCommonHeaders(req)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-CSRF-Token", csrfToken)
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
 
 	log.Debug().Str("ycid", ycid).Msg("Submitting login credentials")
 	resp, err = httpClient.Do(req)

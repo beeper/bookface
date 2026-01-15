@@ -63,9 +63,6 @@ func (bc *BookfaceClient) Connect(ctx context.Context) {
 		ownGhost.UpdateInfo(ctx, ghostInfo)
 	}
 
-	// Ensure the connector has our cookie jar for authenticated media fetches
-	bc.Connector.SetCookieJar(bc.Client.GetCookieJar())
-
 	// Update and save RemoteProfile
 	bc.UserLogin.RemoteName = user.HNID
 	bc.UserLogin.RemoteProfile = status.RemoteProfile{
@@ -246,7 +243,7 @@ func (bc *BookfaceClient) makeAvatar(ctx context.Context, avatarURL string) *bri
 			if err != nil {
 				return nil, err
 			}
-			req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+			req.Header.Set("User-Agent", bookface.UserAgent)
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
 				return nil, err

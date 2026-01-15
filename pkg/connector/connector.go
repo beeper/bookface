@@ -2,8 +2,6 @@ package connector
 
 import (
 	"context"
-	"net/http"
-	"sync"
 
 	"go.mau.fi/util/configupgrade"
 	"maunium.net/go/mautrix/bridgev2"
@@ -16,25 +14,6 @@ import (
 type BookfaceConnector struct {
 	Bridge      *bridgev2.Bridge
 	DirectMedia bool
-
-	// cookieJar is shared with user clients for authenticated media fetches.
-	// When a user logs in, their client's cookie jar is stored here.
-	cookieJar   http.CookieJar
-	cookieJarMu sync.RWMutex
-}
-
-// SetCookieJar sets the cookie jar used for authenticated requests.
-func (bc *BookfaceConnector) SetCookieJar(jar http.CookieJar) {
-	bc.cookieJarMu.Lock()
-	bc.cookieJar = jar
-	bc.cookieJarMu.Unlock()
-}
-
-// GetCookieJar returns the cookie jar for authenticated requests.
-func (bc *BookfaceConnector) GetCookieJar() http.CookieJar {
-	bc.cookieJarMu.RLock()
-	defer bc.cookieJarMu.RUnlock()
-	return bc.cookieJar
 }
 
 var _ bridgev2.NetworkConnector = (*BookfaceConnector)(nil)
@@ -119,9 +98,6 @@ func (bc *BookfaceConnector) LoadUserLogin(ctx context.Context, login *bridgev2.
 	})
 
 	bookfaceClient := bookface.NewClient(metadata.Cookies, metadata.CSRFToken, login.Log)
-
-	// Share the client's cookie jar with the connector for authenticated media fetches
-	bc.SetCookieJar(bookfaceClient.GetCookieJar())
 
 	client := &BookfaceClient{
 		Connector: bc,

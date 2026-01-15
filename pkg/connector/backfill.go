@@ -590,7 +590,7 @@ func (bc *BookfaceClient) convertMediaToContent(ctx context.Context, media *book
 
 	if connector.DirectMedia {
 		// Generate direct media URI
-		mediaID := MakeAttachmentMediaID(mediaURL)
+		mediaID := MakeAttachmentMediaID(bc.UserLogin.ID, mediaURL)
 		mxc, err := bc.UserLogin.Bridge.Matrix.GenerateContentURI(ctx, mediaID)
 		if err != nil {
 			bc.UserLogin.Log.Warn().Err(err).Str("url", mediaURL).Msg("Failed to generate direct media URI, falling back to upload")
@@ -620,7 +620,7 @@ func (bc *BookfaceClient) downloadMedia(ctx context.Context, mediaURL string) ([
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+	req.Header.Set("User-Agent", bookface.UserAgent)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

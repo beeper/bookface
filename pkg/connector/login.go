@@ -108,9 +108,7 @@ func (pl *PasswordLogin) SubmitUserInput(ctx context.Context, input map[string]s
 		},
 	}
 
-	// Share the client's cookie jar with the connector for authenticated media fetches
 	connector := pl.Bridge.Network.(*BookfaceConnector)
-	connector.SetCookieJar(client.GetCookieJar())
 
 	// Create the user login
 	ul, err := pl.User.NewLogin(ctx, dbUserLogin, &bridgev2.NewLoginParams{
