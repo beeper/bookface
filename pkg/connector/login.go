@@ -28,16 +28,18 @@ func (pl *PasswordLogin) Start(ctx context.Context) (*bridgev2.LoginStep, error)
 		UserInputParams: &bridgev2.LoginUserInputParams{
 			Fields: []bridgev2.LoginInputDataField{
 				{
-					Type:        bridgev2.LoginInputFieldTypeUsername,
-					ID:          "ycid",
-					Name:        "YC ID",
-					Description: "Your YC username (e.g., your Bookface login)",
+					Type:           bridgev2.LoginInputFieldTypeUsername,
+					ID:             "ycid",
+					Name:           "YC ID",
+					Description:    "Your YC username (e.g., your Bookface login)",
+					AutofillDomain: "ycombinator.com",
 				},
 				{
-					Type:        bridgev2.LoginInputFieldTypePassword,
-					ID:          "password",
-					Name:        "Password",
-					Description: "Your YC account password",
+					Type:           bridgev2.LoginInputFieldTypePassword,
+					ID:             "password",
+					Name:           "Password",
+					Description:    "Your YC account password",
+					AutofillDomain: "ycombinator.com",
 				},
 			},
 		},
