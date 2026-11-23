@@ -65,8 +65,8 @@ func (bc *BookfaceConnector) GetBridgeInfoVersion() (info, capabilities int) {
 
 func (bc *BookfaceConnector) GetLoginFlows() []bridgev2.LoginFlow {
 	return []bridgev2.LoginFlow{{
-		Name:        "Password",
-		Description: "Log in with your YC username and password",
+		Name:        msgFlowPasswordName.Message(),
+		Description: msgFlowPasswordDescription.Message(),
 		ID:          "password",
 	}}
 }

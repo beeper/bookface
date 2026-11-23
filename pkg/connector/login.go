@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"go.mau.fi/util/l10n"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/bridgev2/networkid"
@@ -24,21 +25,21 @@ func (pl *PasswordLogin) Start(ctx context.Context) (*bridgev2.LoginStep, error)
 	return &bridgev2.LoginStep{
 		Type:         bridgev2.LoginStepTypeUserInput,
 		StepID:       "fi.mau.bookface.password",
-		Instructions: "Enter your YC (Y Combinator) login credentials. These are the same credentials you use to log into Bookface or other YC services.",
+		Instructions: msgStepPasswordInstructions.Message(),
 		UserInputParams: &bridgev2.LoginUserInputParams{
 			Fields: []bridgev2.LoginInputDataField{
 				{
 					Type:           bridgev2.LoginInputFieldTypeUsername,
 					ID:             "ycid",
-					Name:           "YC ID",
-					Description:    "Your YC username (e.g., your Bookface login)",
+					Name:           msgFieldYCIDName.Message(),
+					Description:    msgFieldYCIDDescription.Message(),
 					AutofillDomain: "ycombinator.com",
 				},
 				{
 					Type:           bridgev2.LoginInputFieldTypePassword,
 					ID:             "password",
-					Name:           "Password",
-					Description:    "Your YC account password",
+					Name:           msgFieldPasswordName.Message(),
+					Description:    msgFieldPasswordDescription.Message(),
 					AutofillDomain: "ycombinator.com",
 				},
 			},
@@ -144,7 +145,7 @@ func (pl *PasswordLogin) SubmitUserInput(ctx context.Context, input map[string]s
 	return &bridgev2.LoginStep{
 		Type:         bridgev2.LoginStepTypeComplete,
 		StepID:       "fi.mau.bookface.complete",
-		Instructions: fmt.Sprintf("Successfully logged in as %s", displayName),
+		Instructions: msgStepCompleteInstructions.Render(l10n.Params{"name": displayName}),
 		CompleteParams: &bridgev2.LoginCompleteParams{
 			UserLoginID: ul.ID,
 			UserLogin:   ul,

@@ -7,9 +7,9 @@ require (
 	github.com/enescakir/emoji v1.0.0
 	github.com/google/uuid v1.6.0
 	github.com/rs/zerolog v1.35.1
-	go.mau.fi/util v0.11.1
+	go.mau.fi/util v0.11.2-0.20261123182504-13194d8788b7
 	golang.org/x/net v0.62.0
-	maunium.net/go/mautrix v0.33.1-0.20261120111454-33abe66d85a0
+	maunium.net/go/mautrix v0.33.1-0.20261123182552-2fd758b53ce1
 )
 
 require (
