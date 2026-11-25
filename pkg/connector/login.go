@@ -33,6 +33,7 @@ func (pl *PasswordLogin) Start(ctx context.Context) (*bridgev2.LoginStep, error)
 					ID:             "ycid",
 					Name:           msgFieldYCIDName.Message(),
 					Description:    msgFieldYCIDDescription.Message(),
+					Placeholder:    l10n.Unlocalized("jsmith"),
 					AutofillDomain: "ycombinator.com",
 				},
 				{
